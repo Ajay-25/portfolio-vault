@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import { stockPriceQuery } from "@/lib/utils/stock-ticker";
 
 export type LivePrice = {
   price:     number;
@@ -32,7 +33,7 @@ export function useLivePrices(
 
     const results = await Promise.allSettled(
       holdings.map((h) =>
-        fetch(`/api/market/stock?symbol=${h.symbol}&exchange=${h.exchange}`)
+        fetch(`/api/market/stock?${stockPriceQuery(h.symbol, h.exchange)}`)
           .then((r) => r.json())
           .then((data) => ({
             key:       `${h.symbol}:${h.exchange}`,

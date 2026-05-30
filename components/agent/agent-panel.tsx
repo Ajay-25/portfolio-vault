@@ -440,39 +440,39 @@ export function AgentPanel() {
               )}
               <div className="space-y-1.5">
                 {chats.map((c) => (
-                  <button
+                  <div
                     key={c.id}
-                    type="button"
-                    onClick={() => openChat(c.id)}
-                    className="group w-full rounded-xl px-3 py-2.5 text-left transition-all"
+                    className="group flex items-start gap-1 rounded-xl transition-all"
                     style={{
                       background: activeChatId === c.id ? "rgba(201,168,76,0.1)" : "var(--bg-2)",
                       border:     `1px solid ${activeChatId === c.id ? "rgba(201,168,76,0.3)" : "var(--border)"}`,
                     }}
                   >
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-sans text-xs font-medium" style={{ color: "var(--text)" }}>
-                          {c.title}
-                        </div>
-                        <div className="mt-0.5 truncate font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
-                          {c.preview || `${c.messageCount} messages`}
-                        </div>
-                        <div className="mt-1 font-mono text-[9px]" style={{ color: "var(--text-dim)" }}>
-                          {modelLabel(models, c.model)} · {formatWhen(c.updatedAt)}
-                        </div>
+                    <button
+                      type="button"
+                      onClick={() => openChat(c.id)}
+                      className="min-w-0 flex-1 rounded-xl px-3 py-2.5 text-left"
+                    >
+                      <div className="truncate font-sans text-xs font-medium" style={{ color: "var(--text)" }}>
+                        {c.title}
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => deleteChat(c.id, e)}
-                        className="flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] opacity-0 transition-opacity group-hover:opacity-100"
-                        style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
-                        aria-label="Delete chat"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </button>
+                      <div className="mt-0.5 truncate font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
+                        {c.preview || `${c.messageCount} messages`}
+                      </div>
+                      <div className="mt-1 font-mono text-[9px]" style={{ color: "var(--text-dim)" }}>
+                        {modelLabel(models, c.model)} · {formatWhen(c.updatedAt)}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => deleteChat(c.id, e)}
+                      className="mr-2 mt-2 flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] opacity-0 transition-opacity group-hover:opacity-100"
+                      style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+                      aria-label="Delete chat"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>

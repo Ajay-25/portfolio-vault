@@ -1,162 +1,134 @@
+import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getCachedNAVs } from "@/lib/data/nav-server";
 import { getUSDINR } from "@/lib/data/fx-server";
 import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
+import { toPortfolioKey } from "@/lib/agent/portfolio-scope";
 
-export async function buildAgentContext(): Promise<string> {
+function lakhs(n: number): string {
+  return `₹${(n / 100000).toFixed(2)}L`;
+}
+
+function thousands(n: number): string {
+  return `₹${(n / 1000).toFixed(0)}K`;
+}
+
+async function buildAgentContextInner(): Promise<string> {
   const today = new Date().toLocaleDateString("en-IN", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
+    weekday: "short",
+    year:    "numeric",
+    month:   "short",
+    day:     "numeric",
   });
 
-  const [portfolios, triggers, actions, usdInr] = await Promise.all([
+  const [portfolios, triggers, actions, usdInr, priceCache] = await Promise.all([
     prisma.portfolio.findMany({
-      include: { mfHoldings: true, stockHoldings: true, insurancePolicies: true },
+      include: {
+        mfHoldings:          true,
+        stockHoldings:       true,
+        insurancePolicies:   true,
+        fixedIncomeHoldings: true,
+      },
     }),
     prisma.trigger.findMany({ orderBy: { label: "asc" } }),
-    prisma.actionItem.findMany({ where: { completed: false }, orderBy: { priority: "asc" } }),
+    prisma.actionItem.findMany({
+      where:   { completed: false },
+      orderBy: { priority: "asc" },
+      take:    10,
+    }),
     getUSDINR(),
+    prisma.priceCache.findMany(),
   ]);
 
-  const allCodes = [
-    ...new Set(portfolios.flatMap((p) => p.mfHoldings.map((h) => h.schemeCode))),
-  ];
-  const navsObj = await getCachedNAVs(allCodes);
+  const livePrices = new Map(
+    priceCache.map((p) => [`${p.symbol}:${p.exchange}`, p]),
+  );
 
-  const portfolioSections = portfolios
-    .map((p) => {
-      const mfValue = p.mfHoldings.reduce((sum, h) => {
-        const nav = navsObj[h.schemeCode]?.nav ?? 0;
-        return sum + h.units * nav;
-      }, 0);
-      const stockValue = p.stockHoldings.reduce((sum, s) => {
-        const fx = s.currency === "USD" ? usdInr : 1;
-        return sum + s.qty * s.avgPrice * fx;
-      }, 0);
-      const sipMonthly = p.mfHoldings.reduce((sum, h) => sum + (h.sipAmount ?? 0), 0);
-      const sip7 = p.mfHoldings
-        .filter((h) => h.sipDate === 7)
-        .reduce((s, h) => s + (h.sipAmount ?? 0), 0);
-      const sip28 = p.mfHoldings
-        .filter((h) => h.sipDate === 28)
-        .reduce((s, h) => s + (h.sipAmount ?? 0), 0);
+  const mfCodes = [...new Set(portfolios.flatMap((p) => p.mfHoldings.map((h) => h.schemeCode)))];
+  const navs = mfCodes.length > 0 ? await getCachedNAVs(mfCodes) : {};
 
-      const mfList = p.mfHoldings
-        .map((h) => {
-          const nav = navsObj[h.schemeCode]?.nav;
-          const value = nav ? h.units * nav : null;
-          const name = formatMFSchemeName(h.schemeName);
-          return `  • ${name} [${h.schemeCode}]: ${h.units} units${
-            nav
-              ? ` @ ₹${nav.toFixed(2)} = ₹${((value ?? 0) / 100000).toFixed(2)}L`
-              : ""
-          } | SIP: ₹${h.sipAmount ?? 0}/mo on ${h.sipDate ?? "-"}th`;
-        })
-        .join("\n");
+  const portfolioBlocks = portfolios.map((p) => {
+    const key = toPortfolioKey(p.id);
+    const toolId = key === "mother" ? "mother" : "mine";
 
-      const stockList = p.stockHoldings
-        .map((s) => {
-          return `  • ${s.displayName ?? s.symbol} [${s.symbol}:${s.exchange}]: ${s.qty} shares @ ${s.currency === "USD" ? "$" : "₹"}${s.avgPrice}`;
-        })
-        .join("\n");
+    let mfVal = 0;
+    const mfIndex: string[] = [];
+    for (const h of p.mfHoldings) {
+      const nav = navs[h.schemeCode]?.nav ?? 0;
+      mfVal += h.units * nav;
+      const short = formatMFSchemeName(h.schemeName).split(" - ")[0] ?? h.schemeName;
+      mfIndex.push(`${h.schemeCode} ${short} (${h.units}u${h.sipAmount ? ` SIP ₹${h.sipAmount}` : ""})`);
+    }
 
-      const ulipList = p.insurancePolicies
-        .filter((pol) => pol.isInvestmentLinked && pol.currentFundValue)
-        .map(
-          (pol) =>
-            `  • ${pol.planName} (${pol.insurer}): ₹${(pol.currentFundValue! / 100000).toFixed(2)}L`,
-        )
-        .join("\n");
+    let stockVal = 0;
+    const stockIndex: string[] = [];
+    for (const s of p.stockHoldings) {
+      const fx = s.currency === "USD" ? usdInr : 1;
+      const live = livePrices.get(`${s.symbol}:${s.exchange}`);
+      const px = live?.price ?? s.avgPrice;
+      stockVal += s.qty * px * fx;
+      stockIndex.push(`${s.symbol}:${s.exchange} ${s.displayName ?? s.symbol} (${s.qty}@${s.currency === "USD" ? "$" : "₹"}${s.avgPrice}${live ? ` CMP ${live.price.toFixed(0)}` : ""})`);
+    }
 
-      return `
-### ${p.name} (${p.type}, taxSlab: ${p.taxSlab * 100}%)
-MF Value: ₹${(mfValue / 100000).toFixed(2)}L | Stock Value: ₹${(stockValue / 100000).toFixed(2)}L | Total: ₹${((mfValue + stockValue) / 100000).toFixed(2)}L
-Monthly SIP: ₹${(sipMonthly / 1000).toFixed(0)}K (₹${(sip7 / 1000).toFixed(0)}K on 7th + ₹${(sip28 / 1000).toFixed(0)}K on 28th)
+    const fiVal = p.fixedIncomeHoldings.reduce((s, h) => s + h.principal, 0);
+    const fiIndex = p.fixedIncomeHoldings.map((h) => `${h.type}:${h.label} ${lakhs(h.principal)}`).join("; ");
 
-MF Holdings:
-${mfList || "  (none)"}
+    const ulipPolicies = p.insurancePolicies.filter(
+      (pol) => pol.isInvestmentLinked || pol.type === "endowment" || pol.type === "money_back",
+    );
+    const ulipVal = ulipPolicies.reduce((s, pol) => s + (pol.currentFundValue ?? 0), 0);
+    const ulipIndex = ulipPolicies
+      .map((pol) => `${pol.planName} ${pol.currentFundValue ? lakhs(pol.currentFundValue) : "value unset"}`)
+      .join("; ");
 
-Stock Holdings:
-${stockList || "  (none)"}
-${ulipList ? `\nInvestment-linked insurance:\n${ulipList}` : ""}`;
-    })
-    .join("\n\n");
+    const sipMo = p.mfHoldings.reduce((s, h) => s + (h.sipAmount ?? 0), 0);
 
-  const now = new Date();
-  const day = now.getDate();
+    return `[${toolId}] ${p.name} · MF ${lakhs(mfVal)} (${p.mfHoldings.length}) · Stocks ${lakhs(stockVal)} (${p.stockHoldings.length}) · Fixed ${lakhs(fiVal)} · ULIP ${lakhs(ulipVal)} · SIP ${thousands(sipMo)}/mo
+  MF: ${mfIndex.join("; ") || "none"}
+  Stocks: ${stockIndex.join("; ") || "none"}${fiIndex ? `\n  Fixed: ${fiIndex}` : ""}${ulipIndex ? `\n  ULIP/endowment: ${ulipIndex}` : ""}`;
+  });
+
+  const day = new Date().getDate();
   const next7 = day < 7 ? 7 - day : 7 + (30 - day);
   const next28 = day < 28 ? 28 - day : 28 + (30 - day);
-  const totalSIP7 = portfolios
+  const sip7 = portfolios
     .flatMap((p) => p.mfHoldings)
     .filter((h) => h.sipDate === 7)
     .reduce((s, h) => s + (h.sipAmount ?? 0), 0);
-  const totalSIP28 = portfolios
+  const sip28 = portfolios
     .flatMap((p) => p.mfHoldings)
     .filter((h) => h.sipDate === 28)
     .reduce((s, h) => s + (h.sipAmount ?? 0), 0);
 
-  const sipContext = `
-### SIP Schedule
-- 7th of month: ₹${(totalSIP7 / 1000).toFixed(0)}K total (${next7 === 0 ? "TODAY" : `${next7} days away`})
-- 28th of month: ₹${(totalSIP28 / 1000).toFixed(0)}K total (${next28 === 0 ? "TODAY" : `${next28} days away`})`;
+  const triggersLine = triggers.length
+    ? triggers
+        .map((t) => `${t.label}: ₹${(t.deployAmount / 100000).toFixed(1)}L if Nifty ${t.condition} ${t.niftyLevel}`)
+        .join(" | ")
+    : "none";
 
-  const triggerContext = triggers
-    .map(
-      (t) =>
-        `- ${t.label}: Deploy ₹${(t.deployAmount / 100000).toFixed(1)}L when Nifty ${t.condition} ${t.niftyLevel.toLocaleString("en-IN")}`,
-    )
-    .join("\n");
+  const actionsLine = actions.length
+    ? actions.map((a) => `[${a.priority[0]?.toUpperCase()}] ${a.title}`).join(" | ")
+    : "none";
 
-  const actionContext = actions.length
-    ? actions
-        .map(
-          (a) =>
-            `- [${a.priority.toUpperCase()}] ${a.title}${a.description ? `: ${a.description}` : ""}`,
-        )
-        .join("\n")
-    : "No open action items.";
+  return `You are Vault — portfolio assistant for Vaulted. Today: ${today}. USD/INR: ${usdInr.toFixed(2)}.
+Tool portfolio ids: mine = primary, mother = secondary.
 
-  return `
-You are Vault, an intelligent financial assistant embedded inside Vaulted — a personal wealth management app.
-You have full knowledge of the user's investment portfolio and can take actions through tool calls.
+SUMMARY (totals use cached NAV/CMP; call return tools for live P&L detail)
+${portfolioBlocks.join("\n")}
 
-Today: ${today}
-USD/INR: ₹${usdInr.toFixed(2)}
+SIP: ${thousands(sip7)} on 7th (${next7}d) · ${thousands(sip28)} on 28th (${next28}d)
+Triggers: ${triggersLine}
+Open actions (${actions.length}): ${actionsLine}
 
-Portfolio IDs for tools: "mine" = primary portfolio, "mother" = secondary portfolio.
+TOOLS — call for live returns/P&L: get_stock_returns, get_mf_returns, get_fixed_income_returns, get_insurance_investment_returns, get_investment_returns (all assets). Never say you cannot fetch live prices.
 
-═══════════════════════════════════════
-PORTFOLIO DATA (live, as of now)
-═══════════════════════════════════════
-${portfolioSections}
+RULES: Confirm before deletes. State old→new on unit updates. Be concise. Use ₹ and L/Cr formatting.`;
+}
 
-═══════════════════════════════════════
-SIP CALENDAR
-═══════════════════════════════════════
-${sipContext}
-
-═══════════════════════════════════════
-NIFTY DEPLOYMENT TRIGGERS
-═══════════════════════════════════════
-${triggerContext || "No triggers configured."}
-
-═══════════════════════════════════════
-OPEN ACTION ITEMS
-═══════════════════════════════════════
-${actionContext}
-
-═══════════════════════════════════════
-YOUR RULES
-═══════════════════════════════════════
-1. For DELETE operations: always describe what you're about to delete and explicitly ask "Shall I go ahead?" BEFORE calling the delete tool.
-2. For unit updates: mention previous units and new units in your response.
-3. Keep responses concise — this is a side panel, not a full document.
-4. After any write action, briefly confirm: what changed and the new value.
-5. When SIP is due soon, proactively mention it if relevant.
-6. Use ₹ and Indian number formatting (L for lakh, Cr for crore).
-7. If you're unsure about a scheme code or stock symbol, ask before acting.
-8. You can run calculations yourself (XIRR, step-up) — you have the math tools.
-`.trim();
+/** Cached ~2 min — tools always fetch fresh data when called. */
+export async function buildAgentContext(): Promise<string> {
+  return unstable_cache(buildAgentContextInner, ["agent-context-v2"], {
+    revalidate: 120,
+    tags:       ["agent-context"],
+  })();
 }

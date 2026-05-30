@@ -1,14 +1,58 @@
 /**
  * lib/apis/prices.ts
- * Server-side price fetching via yahoo-finance2.
+ * Server-side price fetching via Yahoo chart API (primary) and yahoo-finance2 (fallback).
  * All calls happen server-side — zero CORS issues.
  */
 
 import yahooFinance from "yahoo-finance2";
 import { prisma } from "@/lib/prisma";
+import { yahooTickersForStock } from "@/lib/utils/stock-ticker";
 
 const PRICE_TTL_MS  = 5 * 60 * 1000;  // 5 minutes
 const FX_TTL_MS     = 10 * 60 * 1000; // 10 minutes
+
+const YAHOO_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+type YahooChartMeta = {
+  regularMarketPrice:   number;
+  previousClose?:       number;
+  chartPreviousClose?:  number;
+  currency?:            string;
+  fiftyTwoWeekHigh?:    number;
+  fiftyTwoWeekLow?:     number;
+};
+
+async function fetchYahooChartMeta(ticker: string): Promise<YahooChartMeta | null> {
+  try {
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1d`,
+      {
+        headers: {
+          "User-Agent": YAHOO_UA,
+          Accept:       "application/json",
+        },
+        cache: "no-store",
+      },
+    );
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const meta = data.chart?.result?.[0]?.meta as YahooChartMeta | undefined;
+    if (!meta?.regularMarketPrice) return null;
+
+    return meta;
+  } catch {
+    return null;
+  }
+}
+
+function changePctFromMeta(meta: YahooChartMeta): number {
+  const price = meta.regularMarketPrice;
+  const prev  = meta.previousClose ?? meta.chartPreviousClose ?? price;
+  return prev ? ((price - prev) / prev) * 100 : 0;
+}
 
 // ── Nifty 50 ──────────────────────────────────────────────────────────────
 
@@ -21,34 +65,17 @@ export type NiftyData = {
 };
 
 export async function fetchNifty(): Promise<NiftyData | null> {
-  // Source 1: Yahoo Finance chart API (bypasses yahoo-finance2 rate limits)
-  try {
-    const res = await fetch(
-      "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=1d&range=1d",
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept": "application/json",
-        },
-        cache: "no-store",
-      }
-    );
-
-    if (!res.ok) throw new Error(`Yahoo status: ${res.status}`);
-    const data = await res.json();
-    const meta = data.chart.result[0].meta;
-
+  const meta = await fetchYahooChartMeta("^NSEI");
+  if (meta) {
     return {
-      price:     meta.regularMarketPrice ?? 0,
-      changePct: ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100,
+      price:     meta.regularMarketPrice,
+      changePct: changePctFromMeta(meta),
       high52w:   meta.fiftyTwoWeekHigh ?? 0,
-      low52w:    meta.fiftyTwoWeekLow  ?? 0,
+      low52w:    meta.fiftyTwoWeekLow ?? 0,
     };
-  } catch (err) {
-    console.warn("fetchNifty Yahoo failed, trying NSE fallback:", err);
   }
 
-  // Source 2: NSE India official API (most reliable for Indian indices)
+  // Fallback: NSE India official API (most reliable for Indian indices)
   try {
     const res = await fetch("https://www.nseindia.com/api/allIndices", {
       headers: {
@@ -104,25 +131,50 @@ export async function fetchStockPrice(
     return { symbol, exchange, price: cached.price, changePct: cached.changePct, currency: cached.currency };
   }
 
-  const ticker = exchange === "NSE" ? `${symbol}.NS` : symbol;
-  try {
-    const quote    = await yahooFinance.quote(ticker);
-    const price    = quote.regularMarketPrice ?? 0;
-    const changePct = quote.regularMarketChangePercent ?? 0;
-    const currency = quote.currency ?? (exchange === "NSE" ? "INR" : "USD");
+  const tickers = yahooTickersForStock(symbol, exchange);
+  const defaultCurrency = exchange === "NSE" ? "INR" : "USD";
 
-    await prisma.priceCache.upsert({
-      where:  { symbol_exchange: { symbol, exchange } },
-      update: { price, changePct, currency },
-      create: { symbol, exchange, price, changePct, currency },
-    });
+  for (const ticker of tickers) {
+    const chartMeta = await fetchYahooChartMeta(ticker);
+    if (chartMeta) {
+      const price     = chartMeta.regularMarketPrice;
+      const changePct = changePctFromMeta(chartMeta);
+      const currency  = chartMeta.currency ?? defaultCurrency;
 
-    return { symbol, exchange, price, changePct, currency };
-  } catch {
-    return cached
-      ? { symbol, exchange, price: cached.price, changePct: cached.changePct, currency: cached.currency }
-      : null;
+      await prisma.priceCache.upsert({
+        where:  { symbol_exchange: { symbol, exchange } },
+        update: { price, changePct, currency },
+        create: { symbol, exchange, price, changePct, currency },
+      });
+
+      return { symbol, exchange, price, changePct, currency };
+    }
   }
+
+  for (const ticker of tickers) {
+    try {
+      const quote     = await yahooFinance.quote(ticker);
+      const price     = quote.regularMarketPrice ?? 0;
+      if (!price) continue;
+      const changePct = quote.regularMarketChangePercent ?? 0;
+      const currency  = quote.currency ?? defaultCurrency;
+
+      await prisma.priceCache.upsert({
+        where:  { symbol_exchange: { symbol, exchange } },
+        update: { price, changePct, currency },
+        create: { symbol, exchange, price, changePct, currency },
+      });
+
+      return { symbol, exchange, price, changePct, currency };
+    } catch {
+      /* try next ticker candidate */
+    }
+  }
+
+  console.warn(`fetchStockPrice failed for ${symbol} (${exchange}), tried: ${tickers.join(", ")}`);
+  return cached
+    ? { symbol, exchange, price: cached.price, changePct: cached.changePct, currency: cached.currency }
+    : null;
 }
 
 // ── USD/INR ───────────────────────────────────────────────────────────────

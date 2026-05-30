@@ -2,6 +2,110 @@ import type { FunctionDeclaration } from "@google/generative-ai";
 
 export const AGENT_TOOLS = [
   {
+    name:        "get_mf_returns",
+    description: "Get mutual fund holdings with LIVE NAV and calculated returns vs average buy NAV. Use for MF gain/loss, negative returns, best/worst MF performers, or fund-level P&L.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio to include",
+        },
+        filter: {
+          type:        "string",
+          enum:        ["all", "negative", "positive"],
+          description: "Filter by return: negative = funds in loss, positive = funds in profit",
+        },
+      },
+    },
+  },
+  {
+    name:        "get_fixed_income_returns",
+    description: "Get fixed income holdings (PPF, EPF, NPS, FD, bonds, liquid) with principal, rate, maturity, and estimated accrued returns where rate and start date are available.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio to include",
+        },
+        filter: {
+          type:        "string",
+          enum:        ["all", "negative", "positive"],
+          description: "Filter by estimated return",
+        },
+        type: {
+          type:        "string",
+          description: "Optional filter by type: ppf, epf, nps, fd, bond, liquid, sweep_fd",
+        },
+      },
+    },
+  },
+  {
+    name:        "get_insurance_investment_returns",
+    description: "Get investment-linked insurance (ULIP, endowment, money-back) with premium paid vs current fund value and returns. Use for ULIP/endowment performance questions.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio to include",
+        },
+        filter: {
+          type:        "string",
+          enum:        ["all", "negative", "positive"],
+          description: "Filter by return on premium paid",
+        },
+      },
+    },
+  },
+  {
+    name:        "get_investment_returns",
+    description: "Get returns across ALL asset classes (stocks, MF, fixed income, insurance) in one call. Use when user asks about overall losers/winners or negative returns across the whole portfolio.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio to include",
+        },
+        filter: {
+          type:        "string",
+          enum:        ["all", "negative", "positive"],
+          description: "Filter by return across asset classes",
+        },
+        asset_class: {
+          type:        "string",
+          enum:        ["all", "stocks", "mf", "fixed_income", "insurance"],
+          description: "Limit to one asset class, or all for combined view",
+        },
+      },
+    },
+  },
+  {
+    name:        "get_stock_returns",
+    description: "Get stock holdings with LIVE market prices (CMP) and calculated unrealized returns vs average buy price. Use for questions about negative/positive returns, best/worst performers, P&L, gain %, or which stocks are in loss.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio to include",
+        },
+        filter: {
+          type:        "string",
+          enum:        ["all", "negative", "positive"],
+          description: "Filter by return: negative = stocks in loss, positive = stocks in profit",
+        },
+      },
+    },
+  },
+  {
     name:        "get_portfolio_summary",
     description: "Get a summary of a portfolio including total value, MF value, stock value, and monthly SIP amount. Use this to answer questions about portfolio performance.",
     parameters: {

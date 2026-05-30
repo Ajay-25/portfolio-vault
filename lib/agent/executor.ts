@@ -3,11 +3,19 @@ import { fetchNAV } from "@/lib/apis/amfi";
 import { getCachedNAVs } from "@/lib/data/nav-server";
 import { getUSDINR } from "@/lib/data/fx-server";
 import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
-
-const PORTFOLIO_IDS = {
-  mine:   "portfolio-primary",
-  mother: "portfolio-mom",
-} as const;
+import {
+  fetchStockReturns,
+  formatStockReturnsText,
+} from "@/lib/agent/stock-returns";
+import { fetchMfReturns, formatMfReturnLine, formatMfReturnsText } from "@/lib/agent/mf-returns";
+import {
+  fetchFixedIncomeReturns,
+  fetchInsuranceInvestmentReturns,
+  fetchAllInvestmentReturns,
+  formatFixedIncomeReturnsText,
+  formatInsuranceInvestmentReturnsText,
+} from "@/lib/agent/other-returns";
+import { PORTFOLIO_IDS } from "@/lib/agent/portfolio-scope";
 
 type ToolResult = string;
 
@@ -21,6 +29,42 @@ export async function executeTool(
 ): Promise<ToolResult> {
   try {
     switch (name) {
+      case "get_mf_returns": {
+        const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";
+        const filter = (input.filter as "all" | "negative" | "positive" | undefined) ?? "all";
+        const rows = await fetchMfReturns({ portfolio, filter });
+        return formatMfReturnsText(rows, filter);
+      }
+
+      case "get_fixed_income_returns": {
+        const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";
+        const filter = (input.filter as "all" | "negative" | "positive" | undefined) ?? "all";
+        const type = input.type as string | undefined;
+        const rows = await fetchFixedIncomeReturns({ portfolio, filter, type });
+        return formatFixedIncomeReturnsText(rows, filter);
+      }
+
+      case "get_insurance_investment_returns": {
+        const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";
+        const filter = (input.filter as "all" | "negative" | "positive" | undefined) ?? "all";
+        const rows = await fetchInsuranceInvestmentReturns({ portfolio, filter });
+        return formatInsuranceInvestmentReturnsText(rows, filter);
+      }
+
+      case "get_investment_returns": {
+        const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";
+        const filter = (input.filter as "all" | "negative" | "positive" | undefined) ?? "all";
+        const asset_class = (input.asset_class as "all" | "stocks" | "mf" | "fixed_income" | "insurance" | undefined) ?? "all";
+        return fetchAllInvestmentReturns({ portfolio, filter, asset_class });
+      }
+
+      case "get_stock_returns": {
+        const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";
+        const filter = (input.filter as "all" | "negative" | "positive" | undefined) ?? "all";
+        const rows = await fetchStockReturns({ portfolio, filter });
+        return formatStockReturnsText(rows, filter);
+      }
+
       case "get_portfolio_summary": {
         const ids =
           input.portfolio === "both"
@@ -34,20 +78,46 @@ export async function executeTool(
           ...new Set(portfolios.flatMap((p) => p.mfHoldings.map((h) => h.schemeCode))),
         ];
         const navs = await getCachedNAVs(codes);
-        const usdInr = await getUSDINR();
+        const stockReturns = await fetchStockReturns({
+          portfolio: input.portfolio === "both" ? "both" : (input.portfolio as "mine" | "mother"),
+        });
+        const mfReturns = await fetchMfReturns({
+          portfolio: input.portfolio === "both" ? "both" : (input.portfolio as "mine" | "mother"),
+        });
+        const fiReturns = await fetchFixedIncomeReturns({
+          portfolio: input.portfolio === "both" ? "both" : (input.portfolio as "mine" | "mother"),
+        });
+        const insReturns = await fetchInsuranceInvestmentReturns({
+          portfolio: input.portfolio === "both" ? "both" : (input.portfolio as "mine" | "mother"),
+        });
 
         const summaries = portfolios.map((p) => {
           const mfVal = p.mfHoldings.reduce(
             (s, h) => s + h.units * (navs[h.schemeCode]?.nav ?? 0),
             0,
           );
-          const stVal = p.stockHoldings.reduce(
-            (s, s2) => s + s2.qty * s2.avgPrice * (s2.currency === "USD" ? usdInr : 1),
-            0,
-          );
+          const pKey = p.id === PORTFOLIO_IDS.mother ? "mother" : "mine";
+          const stVal = stockReturns
+            .filter((r) => r.portfolioKey === pKey)
+            .reduce((s, r) => s + r.currentValueInr, 0);
+          const fiVal = fiReturns
+            .filter((r) => r.portfolioKey === pKey)
+            .reduce((s, r) => s + (r.estimatedValue ?? r.principal), 0);
+          const insVal = insReturns
+            .filter((r) => r.portfolioKey === pKey)
+            .reduce((s, r) => s + (r.fundValue ?? r.guaranteedValue ?? 0), 0);
           const sip = p.mfHoldings.reduce((s, h) => s + (h.sipAmount ?? 0), 0);
-          return `${p.name}: MF ₹${(mfVal / 100000).toFixed(2)}L + Stocks ₹${(stVal / 100000).toFixed(2)}L = Total ₹${((mfVal + stVal) / 100000).toFixed(2)}L | SIP ₹${(sip / 1000).toFixed(0)}K/mo`;
+          const total = mfVal + stVal + fiVal + insVal;
+          return `${p.name}: MF ₹${(mfVal / 100000).toFixed(2)}L + Stocks ₹${(stVal / 100000).toFixed(2)}L + Fixed ₹${(fiVal / 100000).toFixed(2)}L + Insurance ₹${(insVal / 100000).toFixed(2)}L = ₹${(total / 100000).toFixed(2)}L | SIP ₹${(sip / 1000).toFixed(0)}K/mo`;
         });
+        if (input.portfolio === "both" && summaries.length > 1) {
+          const combined =
+            mfReturns.reduce((s, r) => s + r.currentValueInr, 0) +
+            stockReturns.reduce((s, r) => s + r.currentValueInr, 0) +
+            fiReturns.reduce((s, r) => s + (r.estimatedValue ?? r.principal), 0) +
+            insReturns.reduce((s, r) => s + (r.fundValue ?? r.guaranteedValue ?? 0), 0);
+          return `${summaries.join("\n")}\nCombined portfolio value: ₹${(combined / 100000).toFixed(2)}L`;
+        }
         return summaries.join("\n");
       }
 

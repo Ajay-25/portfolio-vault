@@ -4,12 +4,14 @@ import { fetchStockPrice } from "@/lib/apis/prices";
 /** GET /api/market/stock?symbol=RELIANCE&exchange=NSE */
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-  const symbol   = searchParams.get("symbol");
+  const rawSymbol = searchParams.get("symbol");
   const exchange = searchParams.get("exchange") ?? "NSE";
 
-  if (!symbol) {
+  if (!rawSymbol) {
     return NextResponse.json({ error: "symbol required" }, { status: 400 });
   }
+
+  const symbol = decodeURIComponent(rawSymbol).trim();
 
   const data = await fetchStockPrice(symbol, exchange);
 

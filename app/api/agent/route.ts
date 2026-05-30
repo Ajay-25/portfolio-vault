@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveModel } from "@/lib/agent/models";
@@ -92,6 +92,7 @@ export async function POST(req: NextRequest) {
 
     if (result.refreshed) {
       revalidatePath("/dashboard", "layout");
+      revalidateTag("agent-context");
     }
 
     return NextResponse.json({
