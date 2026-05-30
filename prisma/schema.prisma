@@ -1,0 +1,239 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ──────────────────────────────────────────
+// PORTFOLIO & HOLDINGS
+// ──────────────────────────────────────────
+
+model Portfolio {
+  id            String         @id @default(uuid())
+  ownerId       String         @default("primary") // ready for multi-user
+  name          String
+  type          String         // "primary" | "secondary"
+  taxSlab       Float          @default(0.30)
+  ltcgUsed      Float          @default(0)         // LTCG exemption used this FY (₹)
+  createdAt     DateTime       @default(now())
+  mfHoldings          MFHolding[]
+  stockHoldings       StockHolding[]
+  fixedIncomeHoldings FixedIncomeHolding[]
+  insurancePolicies   InsurancePolicy[]
+  snapshots           Snapshot[]
+  sipSchedules        SIPSchedule[]
+}
+
+model InsurancePolicy {
+  id            String    @id @default(uuid())
+  portfolioId   String
+
+  type          String    // term | health | ulip | endowment | money_back
+
+  insurer       String
+  planName      String
+  policyNumber  String?
+
+  startDate       DateTime?
+  premiumEndDate  DateTime?
+  policyEndDate   DateTime?
+  nextPremiumDate DateTime?
+
+  sumAssured         Float?
+  premium            Float?
+  premiumFrequency   String?
+  totalPremiumPaid   Float?
+
+  isInvestmentLinked Boolean @default(false)
+  currentFundValue   Float?
+  fundValueAsOf      DateTime?
+  fundType           String?
+  guaranteedMaturity Float?
+
+  status String @default("active")
+
+  membersCount Int?
+  memberNames  String?
+  noClaimBonus Float?
+
+  riders String?
+
+  notes String?
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId])
+}
+
+model MFHolding {
+  id          String    @id @default(uuid())
+  portfolioId String
+  schemeCode  String
+  schemeName  String
+  units       Float
+  avgNAV      Float?    // for gain calculation
+  sipAmount   Int?      // monthly SIP in ₹
+  sipDate     Int?      // day of month (e.g. 7 or 28)
+  category    String?   // Flexi | Mid | Small | Large | Index | Gold | Hybrid | BAF
+  status      String    @default("active") // active | hold | exit
+  notes       String?
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, schemeCode])
+}
+
+model StockHolding {
+  id          String    @id @default(uuid())
+  portfolioId String
+  symbol      String
+  displayName String?
+  exchange    String    // NSE | NYSE
+  currency    String    @default("INR")
+  qty         Float
+  avgPrice    Float
+  action      String?   // HOLD | BUY | EXIT | TRIM
+  notes       String?
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, symbol, exchange])
+}
+
+model FixedIncomeHolding {
+  id           String    @id @default(uuid())
+  portfolioId  String
+  type         String    // ppf | epf | nps | fd | bond | liquid | sweep_fd
+  label        String
+  issuer       String?
+  principal    Float
+  rate         Float?
+  startDate    DateTime?
+  maturityDate DateTime?
+  taxBenefit   String?
+  notes        String?
+  portfolio    Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+}
+
+// ──────────────────────────────────────────
+// LIVE DATA CACHE
+// ──────────────────────────────────────────
+
+model NavCache {
+  schemeCode String   @id
+  schemeName String?
+  nav        Float
+  navDate    String
+  updatedAt  DateTime @updatedAt
+}
+
+model PriceCache {
+  symbol      String
+  exchange    String
+  price       Float
+  changePct   Float    @default(0)
+  currency    String   @default("INR")
+  marketState String?
+  updatedAt   DateTime @updatedAt
+
+  @@id([symbol, exchange])
+}
+
+model FxCache {
+  pair      String   @id // e.g. "USDINR"
+  rate      Float
+  updatedAt DateTime @updatedAt
+}
+
+// ──────────────────────────────────────────
+// HISTORY & ANALYTICS
+// ──────────────────────────────────────────
+
+model Snapshot {
+  id            String    @id @default(uuid())
+  portfolioId   String
+  date          DateTime
+  totalValue    Float
+  totalInvested Float
+  portfolio     Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, date])
+}
+
+// ──────────────────────────────────────────
+// SIP SCHEDULES
+// ──────────────────────────────────────────
+
+model SIPSchedule {
+  id          String    @id @default(uuid())
+  portfolioId String
+  schemeCode  String
+  schemeName  String
+  amount      Int
+  dayOfMonth  Int       // 7 or 28
+  active      Boolean   @default(true)
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+}
+
+// ──────────────────────────────────────────
+// ALERTS (Phase 2)
+// ──────────────────────────────────────────
+
+model Alert {
+  id          String    @id @default(uuid())
+  ownerId     String
+  symbol      String
+  exchange    String    @default("NSE")
+  type        String    // price_above | price_below | nifty_above | nifty_below
+  target      Float
+  message     String?
+  active      Boolean   @default(true)
+  triggered   Boolean   @default(false)
+  triggeredAt DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model Trigger {
+  id           String  @id @default(uuid())
+  ownerId      String
+  label        String  // T1 | T2 | T3
+  niftyLevel   Float
+  deployAmount Int
+  condition    String  // above | below
+  active       Boolean @default(true)
+}
+
+// ──────────────────────────────────────────
+// ACTION ITEMS
+// ──────────────────────────────────────────
+
+model ActionItem {
+  id          String    @id @default(uuid())
+  ownerId     String
+  title       String
+  description String?
+  dueDate     DateTime?
+  completed   Boolean   @default(false)
+  priority    String    @default("medium") // high | medium | low
+  bucket      String    @default("pending") // immediate | pending | longterm
+  createdAt   DateTime  @default(now())
+}
+
+// ──────────────────────────────────────────
+// NET WORTH (manual asset buckets)
+// ──────────────────────────────────────────
+
+model NetWorthConfig {
+  id             String   @id @default("default")
+  ownerId        String   @default("primary")
+  indianStocks   Float    @default(0) // editable; seeded from holdings
+  ppfBalance     Float    @default(1200000)
+  epfBalance     Float    @default(200000)
+  npsBalance     Float    @default(200000)
+  liquidBalance  Float    @default(500000)
+  updatedAt      DateTime @updatedAt
+}
