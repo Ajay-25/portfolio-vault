@@ -9,6 +9,18 @@ import {
   type GeminiModelOption,
   type TokenUsageTier,
 } from "@/lib/agent/models";
+import type { AgentStreamEvent } from "@/lib/agent/stream-events";
+
+const AGENT_TIMEOUT_MS = 280_000;
+
+type MessageAttachment = {
+  fileName:   string;
+  mimeType:   string;
+  sheets:     string[];
+  rowCount:   number;
+  parsedText: string;
+  truncated?: boolean;
+};
 
 type ToolCall = {
   name:   string;
@@ -16,11 +28,43 @@ type ToolCall = {
 };
 
 type Message = {
-  id:        string;
-  role:      "user" | "assistant";
-  content:   string;
-  toolCalls?: ToolCall[] | null;
+  id:           string;
+  role:         "user" | "assistant";
+  content:      string;
+  toolCalls?:   ToolCall[] | null;
+  attachments?: MessageAttachment[] | null;
+  streaming?:   boolean;
+  status?:      string;
 };
+
+function describeAgentError(err: unknown, timedOut: boolean): string {
+  if (timedOut) {
+    return "Request timed out. If you asked for a big change (e.g. delete all holdings), reopen this chat from history — your message was saved and the action may have completed.";
+  }
+  if (err instanceof Error) {
+    if (err.name === "AbortError") return "Request cancelled.";
+    return err.message;
+  }
+  return "Connection error. Check your network and try again.";
+}
+
+function parseSseBlocks(buffer: string): { events: AgentStreamEvent[]; rest: string } {
+  const events: AgentStreamEvent[] = [];
+  const blocks = buffer.split("\n\n");
+  const rest = blocks.pop() ?? "";
+  for (const block of blocks) {
+    const line = block.trim();
+    if (!line.startsWith("data:")) continue;
+    try {
+      events.push(JSON.parse(line.slice(5).trim()) as AgentStreamEvent);
+    } catch {
+      /* skip malformed chunk */
+    }
+  }
+  return { events, rest };
+}
+
+type PendingAttachment = MessageAttachment & { id: string };
 
 type ChatSummary = {
   id:           string;
@@ -92,6 +136,47 @@ function ModelOptionDetails({ m, compact }: { m: GeminiModelOption; compact?: bo
   );
 }
 
+function ToolCallsPanel({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className="mt-1.5 rounded-lg"
+      style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left"
+        aria-expanded={open}
+      >
+        <span className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--gold)" }}>
+          Actions taken ({toolCalls.length})
+        </span>
+        <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t px-2.5 pb-2 pt-1" style={{ borderColor: "var(--border)" }}>
+          {toolCalls.map((tc, i) => (
+            <div
+              key={`${tc.name}-${i}`}
+              className="mt-1 font-mono text-[9px]"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <span style={{ color: "var(--text-dim)" }}>{tc.name}</span>
+              {" → "}
+              {tc.result.slice(0, 100)}
+              {tc.result.length > 100 ? "…" : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AgentPanel() {
   const router = useRouter();
   const [open, setOpen]               = useState(false);
@@ -105,8 +190,18 @@ export function AgentPanel() {
   const [input, setInput]             = useState("");
   const [loading, setLoading]         = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
-  const messagesEndRef                = useRef<HTMLDivElement>(null);
-  const inputRef                      = useRef<HTMLInputElement>(null);
+  const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([]);
+  const [uploading, setUploading]       = useState(false);
+  const messagesEndRef                  = useRef<HTMLDivElement>(null);
+  const textareaRef                     = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef                    = useRef<HTMLInputElement>(null);
+
+  const adjustTextareaHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+  }, []);
 
   const loadModels = useCallback(async () => {
     try {
@@ -137,6 +232,7 @@ export function AgentPanel() {
     setMessages([WELCOME]);
     setView("chat");
     setInput("");
+    setPendingFiles([]);
   }, []);
 
   const openChat = useCallback(async (chatId: string) => {
@@ -151,10 +247,11 @@ export function AgentPanel() {
       setMessages(
         data.messages.length > 0
           ? data.messages.map((m: Message) => ({
-              id:        m.id,
-              role:      m.role,
-              content:   m.content,
-              toolCalls: m.toolCalls as ToolCall[] | null,
+              id:          m.id,
+              role:        m.role,
+              content:     m.content,
+              toolCalls:   m.toolCalls as ToolCall[] | null,
+              attachments: m.attachments as MessageAttachment[] | null,
             }))
           : [WELCOME],
       );
@@ -187,12 +284,16 @@ export function AgentPanel() {
     if (open) {
       loadModels();
       loadChats();
-      setTimeout(() => inputRef.current?.focus(), 100);
+      setTimeout(() => textareaRef.current?.focus(), 100);
       if (messages.length === 0) {
         setMessages([WELCOME]);
       }
     }
   }, [open, loadModels, loadChats, messages.length]);
+
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [input, adjustTextareaHeight]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -204,51 +305,202 @@ export function AgentPanel() {
     setModelOpen(false);
   };
 
-  const send = async (text: string) => {
-    if (!text.trim() || loading) return;
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/agent/upload", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error ?? "Upload failed");
+        return;
+      }
+      setPendingFiles((prev) => [
+        ...prev,
+        {
+          id:         `${Date.now()}-${file.name}`,
+          fileName:   data.fileName,
+          mimeType:   data.mimeType,
+          sheets:     data.sheets,
+          rowCount:   data.rowCount,
+          parsedText: data.parsedText,
+          truncated:  data.truncated,
+        },
+      ]);
+    } catch {
+      alert("Failed to upload file");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+  const removePendingFile = (id: string) => {
+    setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const send = async (text: string) => {
+    const trimmed = text.trim();
+    if ((!trimmed && pendingFiles.length === 0) || loading) return;
+
+    const attachments = pendingFiles.map(({ id: _id, ...rest }) => rest);
+    const displayText =
+      trimmed || `📎 ${pendingFiles.map((f) => f.fileName).join(", ")}`;
+
+    const userMsg: Message = {
+      id:          Date.now().toString(),
+      role:        "user",
+      content:     displayText,
+      attachments: attachments.length ? attachments : undefined,
+    };
+    const streamId = `${Date.now()}-stream`;
+    const streamMsg: Message = {
+      id:        streamId,
+      role:      "assistant",
+      content:   "",
+      streaming: true,
+      status:    "Connecting…",
+      toolCalls: [],
+    };
+
+    setMessages((prev) => [...prev, userMsg, streamMsg]);
     setInput("");
+    setPendingFiles([]);
     setLoading(true);
+    requestAnimationFrame(adjustTextareaHeight);
+
+    const controller = new AbortController();
+    let timedOut = false;
+    let timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, AGENT_TIMEOUT_MS);
+
+    const resetTimeout = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, AGENT_TIMEOUT_MS);
+    };
+
+    const patchStream = (patch: Partial<Message>) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === streamId ? { ...m, ...patch } : m)),
+      );
+    };
+
+    let gotDone = false;
 
     try {
       const res = await fetch("/api/agent", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
-          message: text,
-          chatId:  activeChatId,
+          message:     trimmed,
+          chatId:      activeChatId,
           model,
+          attachments: attachments.length ? attachments : undefined,
         }),
+        signal: controller.signal,
       });
-      const data = await res.json();
 
-      if (!res.ok) {
-        setMessages((prev) => [...prev, {
-          id:      `${Date.now()}-err`,
-          role:    "assistant",
-          content: data.error ?? "Sorry, something went wrong.",
-        }]);
-      } else {
-        if (data.chatId && !activeChatId) setActiveChatId(data.chatId);
-        setMessages((prev) => [...prev, {
-          id:        `${Date.now()}-reply`,
-          role:      "assistant",
-          content:   data.reply ?? "Sorry, something went wrong.",
-          toolCalls: data.toolCalls?.length ? data.toolCalls : undefined,
-        }]);
-        if (data.refreshed) router.refresh();
-        loadChats();
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!res.ok || !contentType.includes("text/event-stream")) {
+        const data = contentType.includes("application/json")
+          ? await res.json()
+          : { error: `Request failed (${res.status})` };
+        throw new Error(data.error ?? `Request failed (${res.status})`);
       }
-    } catch {
-      setMessages((prev) => [...prev, {
-        id:      `${Date.now()}-err`,
-        role:    "assistant",
-        content: "Connection error. Please try again.",
-      }]);
+
+      if (!res.body) throw new Error("No response stream from agent");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        resetTimeout();
+        buffer += decoder.decode(value, { stream: true });
+        const { events, rest } = parseSseBlocks(buffer);
+        buffer = rest;
+
+        for (const event of events) {
+          resetTimeout();
+          switch (event.type) {
+            case "status":
+              patchStream({ status: event.message });
+              break;
+            case "text_delta":
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === streamId
+                    ? { ...m, content: m.content + event.text }
+                    : m,
+                ),
+              );
+              break;
+            case "tool_end":
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === streamId
+                    ? {
+                        ...m,
+                        toolCalls: [
+                          ...(m.toolCalls ?? []),
+                          { name: event.name, result: event.result },
+                        ],
+                      }
+                    : m,
+                ),
+              );
+              break;
+            case "done":
+              gotDone = true;
+              patchStream({
+                content:   event.reply,
+                toolCalls: event.toolCalls.length ? event.toolCalls : undefined,
+                streaming: false,
+                status:    undefined,
+              });
+              if (event.chatId) setActiveChatId((prev) => prev ?? event.chatId);
+              if (event.refreshed) router.refresh();
+              loadChats();
+              break;
+            case "error":
+              gotDone = true;
+              patchStream({
+                content:   event.message,
+                streaming: false,
+                status:    undefined,
+              });
+              break;
+            default:
+              break;
+          }
+        }
+      }
+
+      if (!gotDone) {
+        patchStream({
+          content:   "Response ended unexpectedly. Reopen this chat from history to see if Vault replied.",
+          streaming: false,
+          status:    undefined,
+        });
+      }
+    } catch (err) {
+      patchStream({
+        content:   describeAgentError(err, timedOut),
+        streaming: false,
+        status:    undefined,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const showStarters =
@@ -496,43 +748,49 @@ export function AgentPanel() {
                         lineHeight: 1.55,
                       }}
                     >
-                      {msg.content}
+                      {msg.streaming && !msg.content ? (
+                        <span className="flex items-center gap-2">
+                          <span className="spinner" style={{ width: 12, height: 12 }} />
+                          <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>
+                            {msg.status ?? "Working…"}
+                          </span>
+                        </span>
+                      ) : (
+                        msg.content
+                      )}
                     </div>
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    {msg.streaming && msg.content && msg.status && (
                       <div
-                        className="mt-1.5 rounded-lg px-2.5 py-2"
-                        style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}
+                        className="mt-1 flex items-center gap-1.5 font-mono text-[9px]"
+                        style={{ color: "var(--text-muted)" }}
                       >
-                        <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--gold)" }}>
-                          Actions taken
-                        </div>
-                        {msg.toolCalls.map((tc) => (
-                          <div key={tc.name} className="mt-1 font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
-                            <span style={{ color: "var(--text-dim)" }}>{tc.name}</span>
-                            {" → "}
-                            {tc.result.slice(0, 100)}
-                            {tc.result.length > 100 ? "…" : ""}
-                          </div>
+                        <span className="spinner" style={{ width: 8, height: 8 }} />
+                        {msg.status}
+                      </div>
+                    )}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {msg.attachments.map((a) => (
+                          <span
+                            key={a.fileName}
+                            className="rounded px-1.5 py-0.5 font-mono text-[8px]"
+                            style={{
+                              background: "var(--bg-2)",
+                              border:     "1px solid var(--border)",
+                              color:      "var(--text-muted)",
+                            }}
+                          >
+                            📎 {a.fileName} ({a.rowCount} rows)
+                          </span>
                         ))}
                       </div>
+                    )}
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <ToolCallsPanel toolCalls={msg.toolCalls} />
                     )}
                   </div>
                 </div>
               ))}
-
-              {loading && (
-                <div className="flex justify-start">
-                  <div
-                    className="flex items-center gap-2 rounded-xl px-4 py-3"
-                    style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
-                  >
-                    <span className="spinner" style={{ width: 12, height: 12 }} />
-                    <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>
-                      Thinking...
-                    </span>
-                  </div>
-                </div>
-              )}
 
               {showStarters && (
                 <div className="mt-2 space-y-1.5">
@@ -572,40 +830,110 @@ export function AgentPanel() {
               className="flex-shrink-0 p-3"
               style={{ borderTop: "1px solid var(--border)" }}
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadFile(file);
+                }}
+              />
+
+              {pendingFiles.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {pendingFiles.map((f) => (
+                    <span
+                      key={f.id}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-mono text-[9px]"
+                      style={{
+                        background: "rgba(201,168,76,0.1)",
+                        border:     "1px solid rgba(201,168,76,0.25)",
+                        color:      "var(--text-dim)",
+                      }}
+                    >
+                      📎 {f.fileName}
+                      <button
+                        type="button"
+                        onClick={() => removePendingFile(f.id)}
+                        className="opacity-70 hover:opacity-100"
+                        aria-label={`Remove ${f.fileName}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
               <div
-                className="flex items-center gap-2 rounded-xl px-3 py-2"
+                className="flex items-end gap-2 rounded-xl px-3 py-2"
                 style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
               >
-                <input
-                  ref={inputRef}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading || uploading}
+                  className="mb-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg font-mono text-xs"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-dim)" }}
+                  title="Attach Excel or CSV"
+                  aria-label="Attach spreadsheet"
+                >
+                  {uploading ? "…" : "📎"}
+                </button>
+                <textarea
+                  ref={textareaRef}
                   value={input}
+                  rows={2}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      const el = e.currentTarget;
+                      const start = el.selectionStart ?? 0;
+                      const end = el.selectionEnd ?? 0;
+                      const next = `${input.slice(0, start)}\t${input.slice(end)}`;
+                      setInput(next);
+                      requestAnimationFrame(() => {
+                        el.selectionStart = el.selectionEnd = start + 1;
+                      });
+                      return;
+                    }
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                       e.preventDefault();
                       send(input);
                     }
                   }}
-                  placeholder="Update units, ask about portfolio..."
+                  placeholder={"Ask about your portfolio…\nEnter = new line · Tab = indent · ⌘/Ctrl+Enter = send"}
                   disabled={loading}
-                  className="flex-1 bg-transparent font-sans text-sm outline-none"
-                  style={{ color: "var(--text)" }}
+                  className="max-h-32 min-h-[2.75rem] flex-1 resize-none bg-transparent font-sans text-sm leading-relaxed outline-none"
+                  style={{
+                    color:       "var(--text)",
+                    whiteSpace:  "pre-wrap",
+                    tabSize:     4,
+                  }}
                 />
                 <button
                   type="button"
                   onClick={() => send(input)}
-                  disabled={loading || !input.trim()}
-                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all"
+                  disabled={loading || (!input.trim() && pendingFiles.length === 0)}
+                  className="mb-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all"
                   style={{
-                    background: input.trim() ? "var(--gold)" : "var(--bg-3)",
-                    opacity:    loading ? 0.5 : 1,
+                    background:
+                      input.trim() || pendingFiles.length > 0 ? "var(--gold)" : "var(--bg-3)",
+                    opacity: loading ? 0.5 : 1,
                   }}
                   aria-label="Send message"
                 >
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
                     <path
                       d="M2 6h8M7 3l3 3-3 3"
-                      stroke={input.trim() ? "#111" : "var(--text-muted)"}
+                      stroke={
+                        input.trim() || pendingFiles.length > 0
+                          ? "#111"
+                          : "var(--text-muted)"
+                      }
                       strokeWidth="1.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -615,7 +943,7 @@ export function AgentPanel() {
               </div>
               <div className="mt-2 flex justify-center">
                 <span className="font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
-                  Powered by Gemini · Chats saved to history
+                  Multiline · tabs preserved · ⌘/Ctrl+Enter to send · .xlsx/.csv up to 5 MB
                 </span>
               </div>
             </div>

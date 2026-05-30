@@ -1,16 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { MfRow, PortfolioPageData, StockRow } from "@/lib/portfolio-data";
-import { formatINR } from "@/lib/utils/finance";
+import { formatINR, formatPct } from "@/lib/utils/finance";
 import { LiveStocksTable } from "@/components/dashboard/live-stocks-table";
+import { MF_CATEGORIES, mfCategoryBadgeClass } from "@/lib/utils/mf-category";
 
 interface PortfolioViewProps {
   data: PortfolioPageData;
 }
-
-const MF_CATEGORIES = ["Flexi", "Mid", "Small", "Large", "Index", "Gold", "Hybrid", "BAF"];
 
 function patchMf(id: string, body: Record<string, unknown>) {
   return fetch("/api/holdings/mf", {
@@ -47,18 +46,73 @@ export function PortfolioView({ data }: PortfolioViewProps) {
     refresh();
   };
 
-  const stats = [
+  const mfStats =
+    data.view === "mf"
+      ? [
+          {
+            label: "Invested",
+            value: data.mfInvested > 0 ? formatINR(data.mfInvested, true) : "—",
+            sub:
+              data.mfFundsMissingCost > 0
+                ? `${data.mfFundsWithCost} of ${data.mfRows.length} funds with avg NAV`
+                : `cost basis · ${data.mfRows.length} funds`,
+            color: "var(--text)",
+          },
+          {
+            label: "Market Value",
+            value: formatINR(data.mfTotal, true),
+            sub: "live NAV",
+            color: "var(--gold-l)",
+          },
+          {
+            label: "Total Gain",
+            value:
+              data.mfGainAbs != null
+                ? `${data.mfGainAbs >= 0 ? "+" : ""}${formatINR(data.mfGainAbs, true)}`
+                : "—",
+            sub:
+              data.mfGainPct != null
+                ? [
+                    formatPct(data.mfGainPct),
+                    data.mfXirr != null ? `XIRR ${formatPct(data.mfXirr)} est.` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : "add avg NAV on holdings for gain",
+            color:
+              data.mfGainAbs == null
+                ? "var(--text-muted)"
+                : data.mfGainAbs >= 0
+                  ? "var(--teal)"
+                  : "var(--red)",
+          },
+          {
+            label: "Next SIP",
+            value: data.upcomingSip
+              ? formatINR(data.upcomingSip.amount, true)
+              : data.sipTotal > 0
+                ? formatINR(data.sipTotal, true)
+                : "—",
+            sub: data.upcomingSip
+              ? `in ${data.upcomingSip.daysUntil}d · ${data.upcomingSip.label} · ${formatINR(data.sipTotal, true)}/mo total`
+              : data.sipTotal > 0
+                ? `${formatINR(data.sipTotal, true)}/mo total mandate`
+                : "no SIPs configured",
+            color: "var(--purple)",
+          },
+        ]
+      : null;
+
+  const stats = mfStats ?? [
     {
       label: "Total Value",
       value: formatINR(data.displayTotal, true),
       sub:
-        data.view === "mf"
-          ? "MF only"
-          : data.view === "us"
-            ? "US holdings · live"
-            : data.view === "in"
-              ? "NSE holdings · live"
-              : "MF + Stocks · live",
+        data.view === "us"
+          ? "US holdings · live"
+          : data.view === "in"
+            ? "NSE holdings · live"
+            : "MF + Stocks · live",
       color: "var(--gold-l)",
     },
     ...(data.showMf
@@ -71,14 +125,27 @@ export function PortfolioView({ data }: PortfolioViewProps) {
           },
           {
             label: "MF Gain",
-            value: `${data.mfGain >= 0 ? "+" : ""}${(data.mfGain * 100).toFixed(2)}%`,
-            sub: "absolute return",
-            color: data.mfGain >= 0 ? "var(--teal)" : "var(--red)",
+            value:
+              data.mfGainPct != null
+                ? formatPct(data.mfGainPct)
+                : "—",
+            sub:
+              data.mfGainAbs != null
+                ? `${data.mfGainAbs >= 0 ? "+" : ""}${formatINR(data.mfGainAbs, true)}`
+                : "absolute return",
+            color:
+              data.mfGainPct == null
+                ? "var(--text-muted)"
+                : data.mfGainPct >= 0
+                  ? "var(--teal)"
+                  : "var(--red)",
           },
           {
             label: "Monthly SIP",
             value: formatINR(data.sipTotal, true),
-            sub: "total mandate",
+            sub: data.upcomingSip
+              ? `next in ${data.upcomingSip.daysUntil}d (${data.upcomingSip.label})`
+              : "total mandate",
             color: "var(--text)",
           },
         ]
@@ -204,6 +271,103 @@ function MfSection({
   onDelete: (id: string) => void;
   onAdded: () => void;
 }) {
+  type MfSortKey =
+    | "schemeName"
+    | "category"
+    | "units"
+    | "avgNAV"
+    | "nav"
+    | "value"
+    | "gain"
+    | "sipAmount"
+    | "status";
+
+  type SortDir = "asc" | "desc";
+
+  const [sortKey, setSortKey] = useState<MfSortKey>("value");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const handleSort = (key: MfSortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "schemeName" || key === "category" || key === "status" ? "asc" : "desc");
+    }
+  };
+
+  const sortedRows = useMemo(() => {
+    const mul = sortDir === "asc" ? 1 : -1;
+
+    const str = (a: string | null | undefined, b: string | null | undefined) =>
+      mul * (a ?? "").localeCompare(b ?? "", "en", { sensitivity: "base" });
+
+    const num = (a: number | null | undefined, b: number | null | undefined) => {
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return mul * (a - b);
+    };
+
+    return [...rows].sort((a, b) => {
+      switch (sortKey) {
+        case "schemeName":
+          return str(a.schemeName, b.schemeName);
+        case "category":
+          return str(a.category, b.category);
+        case "status":
+          return str(a.status, b.status);
+        case "units":
+          return num(a.units, b.units);
+        case "avgNAV":
+          return num(a.avgNAV, b.avgNAV);
+        case "nav":
+          return num(a.nav, b.nav);
+        case "value":
+          return num(a.value, b.value);
+        case "gain":
+          return num(a.gain, b.gain);
+        case "sipAmount":
+          return num(a.sipAmount, b.sipAmount);
+        default:
+          return 0;
+      }
+    });
+  }, [rows, sortKey, sortDir]);
+
+  const SortableTh = ({
+    label,
+    column,
+    align = "left",
+  }: {
+    label:   string;
+    column:  MfSortKey;
+    align?:  "left" | "right" | "center";
+  }) => {
+    const active = sortKey === column;
+    return (
+      <th style={{ textAlign: align }}>
+        <button
+          type="button"
+          onClick={() => handleSort(column)}
+          className="inline-flex items-center gap-1 bg-transparent p-0 font-inherit uppercase tracking-wider"
+          style={{
+            color:      active ? "var(--gold-l)" : "var(--text-muted)",
+            cursor:     "pointer",
+            justifyContent: align === "right" ? "flex-end" : align === "center" ? "center" : "flex-start",
+            width:      align === "right" ? "100%" : undefined,
+          }}
+          aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+        >
+          <span>{label}</span>
+          <span className="font-mono text-[9px]" style={{ opacity: active ? 1 : 0.45 }}>
+            {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+          </span>
+        </button>
+      </th>
+    );
+  };
+
   return (
     <div className="card animate-slide-up stagger-2 min-w-0">
       <div
@@ -225,20 +389,20 @@ function MfSection({
       <table className="data-table min-w-[720px]">
         <thead>
           <tr>
-            <th>Fund Name</th>
-            <th>Cat</th>
-            <th style={{ textAlign: "right" }}>Units</th>
-            <th style={{ textAlign: "right" }}>Avg NAV</th>
-            <th style={{ textAlign: "right" }}>NAV · Date</th>
-            <th style={{ textAlign: "right" }}>Value</th>
-            <th style={{ textAlign: "right" }}>Gain</th>
-            <th style={{ textAlign: "right" }}>SIP/mo</th>
-            <th style={{ textAlign: "center" }}>Status</th>
+            <SortableTh label="Fund Name" column="schemeName" />
+            <SortableTh label="Cat" column="category" />
+            <SortableTh label="Units" column="units" align="right" />
+            <SortableTh label="Avg NAV" column="avgNAV" align="right" />
+            <SortableTh label="NAV · Date" column="nav" align="right" />
+            <SortableTh label="Value" column="value" align="right" />
+            <SortableTh label="Gain" column="gain" align="right" />
+            <SortableTh label="SIP/mo" column="sipAmount" align="right" />
+            <SortableTh label="Status" column="status" align="center" />
             {editMode && <th />}
           </tr>
         </thead>
         <tbody>
-          {rows.map((h) => (
+          {sortedRows.map((h) => (
             <MfRowCells
               key={h.id}
               row={h}
@@ -294,7 +458,11 @@ function MfRowCells({
         </div>
       </td>
       <td>
-        <span className={`badge badge-${row.category}`}>{row.category}</span>
+        {row.category ? (
+          <span className={`badge ${mfCategoryBadgeClass(row.category)}`}>{row.category}</span>
+        ) : (
+          <span className="badge badge-muted">—</span>
+        )}
       </td>
       <td className="text-right">
         {editMode ? (
@@ -430,6 +598,7 @@ function AddMfForm({
   onAdded: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [categories, setCategories] = useState<string[]>([...MF_CATEGORIES]);
   const [form, setForm] = useState({
     schemeCode: "",
     schemeName: "",
@@ -466,7 +635,17 @@ function AddMfForm({
       <div className="px-6 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            setOpen(true);
+            fetch("/api/mf-categories")
+              .then((r) => r.json())
+              .then((d) => {
+                if (Array.isArray(d.categories) && d.categories.length) {
+                  setCategories(d.categories);
+                }
+              })
+              .catch(() => undefined);
+          }}
           className="text-sm font-mono"
           style={{ color: "var(--gold)" }}
         >
@@ -492,7 +671,7 @@ function AddMfForm({
         <option value="28">SIP 28th</option>
       </select>
       <select className="input-field" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-        {MF_CATEGORIES.map((c) => (
+        {categories.map((c) => (
           <option key={c} value={c}>{c}</option>
         ))}
       </select>

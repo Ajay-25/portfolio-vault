@@ -3,6 +3,7 @@ import { getPortfolio } from "@/lib/data/portfolio";
 import { getCachedNAVs } from "@/lib/data/nav-server";
 import { getUSDINR } from "@/lib/data/fx-server";
 import { absoluteReturn } from "@/lib/utils/finance";
+import { computeMfPortfolioStats, type UpcomingSipInfo } from "@/lib/utils/mf-portfolio-stats";
 import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
 
 export type MfRow = {
@@ -47,7 +48,14 @@ export type PortfolioPageData = {
   displayTotal: number;
   mfTotal: number;
   mfGain: number;
+  mfInvested: number;
+  mfGainAbs: number | null;
+  mfGainPct: number | null;
+  mfXirr: number | null;
+  mfFundsWithCost: number;
+  mfFundsMissingCost: number;
   sipTotal: number;
+  upcomingSip: UpcomingSipInfo | null;
   stockTotal: number;
   stockGainPct: number | null;
   mfRows: MfRow[];
@@ -122,18 +130,13 @@ export async function getPortfolioPageData(
   });
 
   const mfTotal = mfRows.reduce((s, h) => s + h.value, 0);
+  const mfStats = computeMfPortfolioStats(mfRows);
   const stockTotal = stockRows.reduce((s, h) => s + h.value, 0);
   const total = mfTotal + stockTotal;
 
-  const mfInvested = mfRows.reduce(
-    (s, h) => s + (h.avgNAV ? h.units * h.avgNAV : 0),
-    0,
-  );
-  const mfGain = mfInvested > 0 ? absoluteReturn(mfInvested, mfTotal) : 0;
-  const sipTotal = portfolio.mfHoldings.reduce(
-    (s, h) => s + (h.sipAmount ?? 0),
-    0,
-  );
+  const mfInvested = mfStats.invested;
+  const mfGain = mfStats.gainPct ?? 0;
+  const sipTotal = mfStats.monthlySipTotal;
 
   const stockInvested = stockRows.reduce((s, h) => s + h.investedInr, 0);
   const stockGainPct =
@@ -179,7 +182,14 @@ export async function getPortfolioPageData(
     displayTotal,
     mfTotal,
     mfGain,
+    mfInvested,
+    mfGainAbs: mfStats.gainAbs,
+    mfGainPct: mfStats.gainPct,
+    mfXirr: mfStats.xirr,
+    mfFundsWithCost: mfStats.fundsWithCostBasis,
+    mfFundsMissingCost: mfStats.fundsMissingCost,
     sipTotal,
+    upcomingSip: mfStats.upcomingSip,
     stockTotal,
     stockGainPct,
     mfRows,

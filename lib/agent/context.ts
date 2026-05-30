@@ -121,6 +121,11 @@ Triggers: ${triggersLine}
 Open actions (${actions.length}): ${actionsLine}
 
 TOOLS — call for live returns/P&L: get_stock_returns, get_mf_returns, get_fixed_income_returns, get_insurance_investment_returns, get_investment_returns (all assets). Never say you cannot fetch live prices.
+Bulk deletes: use delete_all_mf_holdings or delete_all_stocks when user wants to clear an entire asset class — do NOT call delete_mf_holding once per fund.
+Excel/CSV MF import: use bulk_add_mf_holdings with ISIN + name + units per row — AMFI codes are resolved automatically via lookup_mf_scheme / AMFI master. Do NOT ask the user for scheme codes when ISIN is present.
+MF category is optional — use resolve_mf_category or bulk_add_mf_holdings; categories are inferred from fund names and new labels are registered automatically. Never say a category is unavailable.
+User may attach Excel/CSV in chat — parsed sheet data is included with their message.
+User messages may be multiline with tabs, spaces, and aligned columns (pasted tables). Preserve that structure when reading; treat tabs as column separators.
 
 RULES: Confirm before deletes. State old→new on unit updates. Be concise. Use ₹ and L/Cr formatting.`;
 }

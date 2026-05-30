@@ -88,6 +88,16 @@ model MFHolding {
   @@unique([portfolioId, schemeCode])
 }
 
+model MfCategory {
+  id        String   @id @default(cuid())
+  label     String   @unique
+  slug      String   @unique
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([label])
+}
+
 model StockHolding {
   id          String    @id @default(uuid())
   portfolioId String
@@ -255,13 +265,14 @@ model AgentChat {
 }
 
 model AgentMessage {
-  id        String    @id @default(uuid())
-  chatId    String
-  role      String    // user | assistant
-  content   String    @db.Text
-  toolCalls Json?
-  createdAt DateTime  @default(now())
-  chat      AgentChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  chatId      String
+  role        String    // user | assistant
+  content     String    @db.Text
+  toolCalls   Json?
+  attachments Json?
+  createdAt   DateTime  @default(now())
+  chat        AgentChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@index([chatId, createdAt])
 }

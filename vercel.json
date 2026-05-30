@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "app/api/agent/route.ts": {
+      "maxDuration": 300
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/nav-fetch",

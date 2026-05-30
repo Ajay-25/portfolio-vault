@@ -1,13 +1,11 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, type Part } from "@google/generative-ai";
 import { AGENT_TOOLS, WRITE_TOOLS } from "@/lib/agent/tools";
 import { executeTool } from "@/lib/agent/executor";
 import { buildAgentContext } from "@/lib/agent/context";
 import { resolveModel } from "@/lib/agent/models";
+import type { AgentStreamEvent, AgentToolCall } from "@/lib/agent/stream-events";
 
-export type AgentToolCall = {
-  name:   string;
-  result: string;
-};
+export type { AgentToolCall } from "@/lib/agent/stream-events";
 
 export type AgentRunResult = {
   reply:      string;
@@ -20,12 +18,43 @@ type HistoryMessage = {
   content: string;
 };
 
-export async function runAgent(
+export const MAX_AGENT_ROUNDS = 12;
+
+const TOOL_STATUS: Record<string, string> = {
+  get_mf_returns:                    "Fetching live MF returns…",
+  get_stock_returns:                 "Fetching live stock prices…",
+  get_fixed_income_returns:          "Loading fixed income…",
+  get_insurance_investment_returns:  "Loading insurance investments…",
+  get_investment_returns:            "Loading all investment returns…",
+  get_portfolio_summary:             "Summarizing portfolio…",
+  get_upcoming_sips:                 "Checking upcoming SIPs…",
+  get_action_items:                  "Loading action items…",
+  get_nav:                           "Fetching NAV…",
+  lookup_mf_scheme:                  "Looking up AMFI scheme code…",
+  resolve_mf_category:               "Resolving MF category…",
+  bulk_add_mf_holdings:              "Importing MF holdings…",
+  delete_all_mf_holdings:            "Deleting all MF holdings…",
+  delete_all_stocks:                 "Deleting all stock holdings…",
+  delete_mf_holding:                 "Deleting MF holding…",
+  delete_stock:                      "Deleting stock…",
+  update_mf_units:                   "Updating MF units…",
+  add_mf_holding:                    "Adding MF holding…",
+  add_or_update_stock:               "Saving stock holding…",
+  add_action_item:                   "Adding action item…",
+  complete_action_item:              "Completing action item…",
+  log_snapshot:                      "Logging snapshot…",
+  update_investment_fund_value:      "Updating fund value…",
+};
+
+function toolStatus(name: string): string {
+  return TOOL_STATUS[name] ?? `Running ${name}…`;
+}
+
+async function createAgentChat(
   apiKey: string,
   modelId: string,
   history: HistoryMessage[],
-  userMessage: string,
-): Promise<AgentRunResult> {
+) {
   const systemPrompt = await buildAgentContext();
   const genai = new GoogleGenerativeAI(apiKey);
   const model = genai.getGenerativeModel({
@@ -39,48 +68,86 @@ export async function runAgent(
     parts: [{ text: m.content }],
   }));
 
-  const chat = model.startChat({ history: geminiHistory });
+  return model.startChat({ history: geminiHistory });
+}
 
-  let response = await chat.sendMessage(userMessage);
+export async function* runAgentStream(
+  apiKey: string,
+  modelId: string,
+  history: HistoryMessage[],
+  userMessage: string,
+): AsyncGenerator<AgentStreamEvent, AgentRunResult> {
+  const chat = await createAgentChat(apiKey, modelId, history);
+  let nextRequest: string | Part[] = userMessage;
   let rounds = 0;
   let wroteData = false;
   const toolCalls: AgentToolCall[] = [];
+  let reply = "";
 
-  while (rounds < 5) {
+  while (rounds < MAX_AGENT_ROUNDS) {
     rounds++;
-    const candidate = response.response.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
-    const fnCalls = parts.filter((p) => p.functionCall);
+    yield { type: "status", message: rounds === 1 ? "Thinking…" : "Continuing…" };
 
-    if (fnCalls.length === 0) {
-      return {
-        reply:     response.response.text(),
-        toolCalls,
-        refreshed: wroteData,
-      };
+    const streamResult = await chat.sendMessageStream(nextRequest);
+    let roundText = "";
+
+    for await (const chunk of streamResult.stream) {
+      const chunkText = chunk.text();
+      if (chunkText) {
+        roundText += chunkText;
+        yield { type: "text_delta", text: chunkText };
+      }
     }
 
-    const toolResults = await Promise.all(
-      fnCalls.map(async (part) => {
-        const fn = part.functionCall!;
-        if (WRITE_TOOLS.has(fn.name)) wroteData = true;
-        const result = await executeTool(fn.name, (fn.args ?? {}) as Record<string, unknown>);
-        toolCalls.push({ name: fn.name, result });
-        return {
-          functionResponse: {
-            name:     fn.name,
-            response: { result },
-          },
-        };
-      }),
-    );
+    const response = await streamResult.response;
+    const fnCalls = response.functionCalls() ?? [];
 
-    response = await chat.sendMessage(toolResults);
+    if (fnCalls.length === 0) {
+      try {
+        reply = roundText || response.text();
+      } catch {
+        reply = roundText;
+      }
+      if (!reply.trim()) reply = "Done.";
+      return { reply, toolCalls, refreshed: wroteData };
+    }
+
+    const toolResults: Part[] = [];
+
+    for (const fn of fnCalls) {
+      const name = fn.name;
+      yield { type: "status", message: toolStatus(name) };
+      yield { type: "tool_start", name };
+      if (WRITE_TOOLS.has(name)) wroteData = true;
+      const result = await executeTool(name, (fn.args ?? {}) as Record<string, unknown>);
+      toolCalls.push({ name, result });
+      yield { type: "tool_end", name, result };
+      toolResults.push({
+        functionResponse: {
+          name,
+          response: { result },
+        },
+      });
+    }
+
+    nextRequest = toolResults;
   }
 
-  return {
-    reply:     "I couldn't complete that request. Please try again.",
-    toolCalls,
-    refreshed: wroteData,
-  };
+  reply = "I couldn't complete that request in time. Some actions may have partially applied — check your portfolio or try again.";
+  return { reply, toolCalls, refreshed: wroteData };
+}
+
+/** Non-streaming fallback (tests / scripts). */
+export async function runAgent(
+  apiKey: string,
+  modelId: string,
+  history: HistoryMessage[],
+  userMessage: string,
+): Promise<AgentRunResult> {
+  const gen = runAgentStream(apiKey, modelId, history, userMessage);
+  let result = await gen.next();
+  while (!result.done) {
+    result = await gen.next();
+  }
+  return result.value;
 }

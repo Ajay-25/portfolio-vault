@@ -1,4 +1,5 @@
 import type { FunctionDeclaration } from "@google/generative-ai";
+import { MF_CATEGORY_HINT } from "@/lib/utils/mf-category";
 
 export const AGENT_TOOLS = [
   {
@@ -179,26 +180,99 @@ export const AGENT_TOOLS = [
     },
   },
   {
-    name:        "add_mf_holding",
-    description: "Add a new mutual fund holding to a portfolio.",
+    name:        "resolve_mf_category",
+    description: "Identify the MF category for a fund from its name and/or Excel hint. Registers a new category label in the system if it does not exist yet. Use before import when category is missing or unclear — bulk_add_mf_holdings also auto-resolves categories.",
     parameters: {
       type:       "object",
       properties: {
-        scheme_code: { type: "string", description: "AMFI scheme code" },
+        scheme_name: {
+          type:        "string",
+          description: "Full mutual fund name",
+        },
+        category_hint: {
+          type:        "string",
+          description: "Optional category from spreadsheet e.g. Debt, Liquid, Corporate Bond",
+        },
+      },
+      required: ["scheme_name"],
+    },
+  },
+  {
+    name:        "lookup_mf_scheme",
+    description: "Look up AMFI scheme code(s) from ISIN, fund name, or existing code. Use when Excel/CAS rows have ISIN or name but no scheme code. Prefer ISIN when available — most reliable.",
+    parameters: {
+      type:       "object",
+      properties: {
+        isin: {
+          type:        "string",
+          description: "Growth or dividend ISIN e.g. INF109K016B1",
+        },
+        name: {
+          type:        "string",
+          description: "Fund name e.g. ICICI Prudential Corporate Bond Fund",
+        },
+        scheme_code: {
+          type:        "string",
+          description: "Optional — verify an existing AMFI code",
+        },
+      },
+    },
+  },
+  {
+    name:        "bulk_add_mf_holdings",
+    description: "Add or update multiple MF holdings at once. Auto-resolves AMFI codes from ISIN or scheme name via AMFI master data. Use for Excel/CSV portfolio imports and resets after delete_all_mf_holdings.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother"],
+          description: "Target portfolio",
+        },
+        holdings: {
+          type:        "array",
+          description: "Rows to import — scheme_code optional if isin or scheme_name provided",
+          items: {
+            type:       "object",
+            properties: {
+              scheme_name:  { type: "string", description: "Fund name from spreadsheet" },
+              units:        { type: "number", description: "Unit balance" },
+              isin:         { type: "string", description: "ISIN if available — used for lookup" },
+              scheme_code:  { type: "string", description: "AMFI code if already known" },
+              avg_nav:      { type: "number", description: "Average purchase NAV" },
+              sip_amount:   { type: "number", description: "Monthly SIP amount" },
+              sip_date:     { type: "number", description: "SIP date: 7 or 28" },
+              category:     { type: "string", description: MF_CATEGORY_HINT },
+            },
+            required: ["scheme_name", "units"],
+          },
+        },
+      },
+      required: ["portfolio", "holdings"],
+    },
+  },
+  {
+    name:        "add_mf_holding",
+    description: "Add a single mutual fund holding. Provide scheme_code OR isin — code is auto-resolved from ISIN via AMFI if omitted.",
+    parameters: {
+      type:       "object",
+      properties: {
+        scheme_code: { type: "string", description: "AMFI scheme code (optional if isin provided)" },
+        isin:        { type: "string", description: "ISIN — auto-resolves to AMFI code" },
         scheme_name: { type: "string", description: "Full scheme name" },
         units:       { type: "number", description: "Number of units" },
         avg_nav:     { type: "number", description: "Average NAV / purchase price" },
         sip_amount:  { type: "number", description: "Monthly SIP amount (0 if lump sum)" },
         sip_date:    { type: "number", description: "SIP date: 7 or 28" },
-        category:    { type: "string", description: "Flexi | Mid | Small | Large | Index | Gold | Hybrid | BAF" },
+        category:    { type: "string", description: MF_CATEGORY_HINT },
         portfolio:   { type: "string", enum: ["mine", "mother"] },
       },
-      required: ["scheme_code", "scheme_name", "units", "portfolio"],
+      required: ["scheme_name", "units", "portfolio"],
     },
   },
   {
     name:        "delete_mf_holding",
-    description: "Delete a mutual fund holding. IMPORTANT: Only use this after explicit user confirmation. Mention what you are deleting and ask user to confirm before calling this.",
+    description: "Delete a single mutual fund holding by scheme code. For deleting ALL MF holdings at once, use delete_all_mf_holdings instead. Only call after explicit user confirmation.",
     parameters: {
       type:       "object",
       properties: {
@@ -206,6 +280,21 @@ export const AGENT_TOOLS = [
         portfolio:   { type: "string", enum: ["mine", "mother"] },
       },
       required: ["scheme_code", "portfolio"],
+    },
+  },
+  {
+    name:        "delete_all_mf_holdings",
+    description: "Delete ALL mutual fund holdings in one portfolio (or both). Use when user asks to remove/clear all MF holdings. Only call after explicit confirmation — list what will be deleted first unless user already said delete all/clear all.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio(s) to clear",
+        },
+      },
+      required: ["portfolio"],
     },
   },
   {
@@ -227,7 +316,7 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "delete_stock",
-    description: "Delete a stock holding. Only call after explicit confirmation from the user.",
+    description: "Delete a single stock holding. For deleting ALL stocks at once, use delete_all_stocks instead. Only call after explicit confirmation from the user.",
     parameters: {
       type:       "object",
       properties: {
@@ -236,6 +325,21 @@ export const AGENT_TOOLS = [
         portfolio: { type: "string", enum: ["mine", "mother"] },
       },
       required: ["symbol", "exchange", "portfolio"],
+    },
+  },
+  {
+    name:        "delete_all_stocks",
+    description: "Delete ALL stock holdings in one portfolio (or both). Use when user asks to remove/clear all stocks. Only call after explicit confirmation.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio(s) to clear",
+        },
+      },
+      required: ["portfolio"],
     },
   },
   {
@@ -300,9 +404,12 @@ export const AGENT_TOOLS = [
 export const WRITE_TOOLS = new Set([
   "update_mf_units",
   "add_mf_holding",
+  "bulk_add_mf_holdings",
   "delete_mf_holding",
+  "delete_all_mf_holdings",
   "add_or_update_stock",
   "delete_stock",
+  "delete_all_stocks",
   "add_action_item",
   "complete_action_item",
   "log_snapshot",

@@ -537,6 +537,10 @@ html.theme-dark body::before {
 .badge-Gold   { background: rgba(201,168,76,0.1);  color: var(--gold-l);  border: 1px solid rgba(201,168,76,0.2);  }
 .badge-Hybrid { background: rgba(155,127,245,0.1); color: var(--purple);  border: 1px solid rgba(155,127,245,0.2); }
 .badge-BAF    { background: rgba(155,127,245,0.1); color: var(--purple);  border: 1px solid rgba(155,127,245,0.2); }
+.badge-Debt   { background: rgba(72,150,245,0.08); color: var(--blue);   border: 1px solid rgba(72,150,245,0.15); }
+.badge-Liquid { background: var(--teal-dim);       color: var(--teal);    border: 1px solid rgba(0,200,150,0.2);   }
+.badge-Arbitrage { background: rgba(61,79,110,0.3); color: var(--text-dim); border: 1px solid var(--border);      }
+.badge-FOF    { background: rgba(201,168,76,0.08);  color: var(--gold-l);  border: 1px solid rgba(201,168,76,0.15); }
 
 /* ── Data Table ─────────────────────────────────────────────────────────── */
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }

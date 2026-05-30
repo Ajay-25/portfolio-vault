@@ -27,11 +27,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     createdAt: chat.createdAt,
     updatedAt: chat.updatedAt,
     messages:  chat.messages.map((m) => ({
-      id:        m.id,
-      role:      m.role,
-      content:   m.content,
-      toolCalls: m.toolCalls,
-      createdAt: m.createdAt,
+      id:          m.id,
+      role:        m.role,
+      content:     m.content,
+      toolCalls:   m.toolCalls,
+      attachments: m.attachments,
+      createdAt:   m.createdAt,
     })),
   });
 }

@@ -4,6 +4,7 @@ import { getCachedNAVs } from "@/lib/data/nav-server";
 import type { NavResult } from "@/lib/apis/amfi";
 import { formatINR } from "@/lib/utils/finance";
 import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
+import { mfCategoryBadgeClass } from "@/lib/utils/mf-category";
 
 interface MFHoldingsPreviewProps {
   portfolioId: string;
@@ -72,7 +73,11 @@ export async function MFHoldingsPreview({ portfolioId }: MFHoldingsPreviewProps)
                     </div>
                   </td>
                   <td>
-                    <span className={`badge badge-${h.category}`}>{h.category}</span>
+                    {h.category ? (
+                      <span className={`badge ${mfCategoryBadgeClass(h.category)}`}>{h.category}</span>
+                    ) : (
+                      <span className="badge badge-muted">—</span>
+                    )}
                   </td>
                   <td
                     className="font-mono text-right text-sm"
