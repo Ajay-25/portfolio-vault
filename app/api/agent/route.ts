@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth } from "@/auth";
-import { AGENT_TOOLS, WRITE_TOOLS } from "@/lib/agent/tools";
-import { executeTool } from "@/lib/agent/executor";
-import { buildAgentContext } from "@/lib/agent/context";
+import { prisma } from "@/lib/prisma";
+import { resolveModel } from "@/lib/agent/models";
+import { runAgent } from "@/lib/agent/run";
+
+const OWNER_ID = "primary";
+
+function chatTitleFromMessage(message: string): string {
+  const trimmed = message.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= 60) return trimmed;
+  return `${trimmed.slice(0, 57)}...`;
+}
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -12,71 +19,91 @@ export async function POST(req: NextRequest) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "GEMINI_API_KEY not configured" },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 503 });
   }
 
-  const { messages } = await req.json();
-  if (!messages || !Array.isArray(messages)) {
-    return NextResponse.json({ error: "messages required" }, { status: 400 });
+  const body = await req.json();
+  const { message, chatId, model } = body;
+
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return NextResponse.json({ error: "message required" }, { status: 400 });
   }
 
-  const systemPrompt = await buildAgentContext();
+  const modelId = resolveModel(model);
+  let chat = chatId
+    ? await prisma.agentChat.findFirst({ where: { id: chatId, ownerId: OWNER_ID } })
+    : null;
 
-  const genai = new GoogleGenerativeAI(apiKey);
-  const model = genai.getGenerativeModel({
-    model:             "gemini-2.0-flash",
-    systemInstruction: systemPrompt,
-    tools:             [{ functionDeclarations: AGENT_TOOLS }],
+  if (!chat) {
+    chat = await prisma.agentChat.create({
+      data: {
+        ownerId: OWNER_ID,
+        title:   chatTitleFromMessage(message),
+        model:   modelId,
+      },
+    });
+  }
+
+  const priorMessages = await prisma.agentMessage.findMany({
+    where:   { chatId: chat.id },
+    orderBy: { createdAt: "asc" },
+    select:  { role: true, content: true },
   });
 
-  const history = messages.slice(0, -1).map((m: { role: string; content: string }) => ({
-    role:  m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
+  await prisma.agentMessage.create({
+    data: {
+      chatId:  chat.id,
+      role:    "user",
+      content: message.trim(),
+    },
+  });
 
-  const chat = model.startChat({ history });
-  const lastMessage = messages[messages.length - 1].content as string;
+  try {
+    const result = await runAgent(
+      apiKey,
+      modelId,
+      priorMessages.map((m) => ({
+        role:    m.role as "user" | "assistant",
+        content: m.content,
+      })),
+      message.trim(),
+    );
 
-  let response = await chat.sendMessage(lastMessage);
-  let rounds = 0;
-  let wroteData = false;
+    await prisma.agentMessage.create({
+      data: {
+        chatId:    chat.id,
+        role:      "assistant",
+        content:   result.reply,
+        toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+      },
+    });
 
-  while (rounds < 5) {
-    rounds++;
-    const candidate = response.response.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
+    const titleUpdate =
+      chat.title === "New chat" ? chatTitleFromMessage(message) : chat.title;
 
-    const fnCalls = parts.filter((p) => p.functionCall);
+    await prisma.agentChat.update({
+      where: { id: chat.id },
+      data:  {
+        title:     titleUpdate,
+        model:     modelId,
+        updatedAt: new Date(),
+      },
+    });
 
-    if (fnCalls.length === 0) {
-      const text = response.response.text();
-      if (wroteData) {
-        revalidatePath("/dashboard", "layout");
-      }
-      return NextResponse.json({ reply: text, refreshed: wroteData });
+    if (result.refreshed) {
+      revalidatePath("/dashboard", "layout");
     }
 
-    const toolResults = await Promise.all(
-      fnCalls.map(async (part) => {
-        const fn = part.functionCall!;
-        if (WRITE_TOOLS.has(fn.name)) wroteData = true;
-        const result = await executeTool(fn.name, (fn.args ?? {}) as Record<string, unknown>);
-        return {
-          functionResponse: {
-            name:     fn.name,
-            response: { result },
-          },
-        };
-      }),
-    );
-
-    response = await chat.sendMessage(toolResults);
+    return NextResponse.json({
+      chatId:    chat.id,
+      reply:     result.reply,
+      toolCalls: result.toolCalls,
+      refreshed: result.refreshed,
+      model:     modelId,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("Agent error:", err);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-
-  return NextResponse.json({
-    reply: "I couldn't complete that request. Please try again.",
-  });
 }

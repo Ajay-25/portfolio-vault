@@ -1,12 +1,42 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DEFAULT_GEMINI_MODEL,
+  TOKEN_TIER_STYLES,
+  getModelGuide,
+  type GeminiModelOption,
+  type TokenUsageTier,
+} from "@/lib/agent/models";
+
+type ToolCall = {
+  name:   string;
+  result: string;
+};
 
 type Message = {
-  id:      string;
-  role:    "user" | "assistant";
-  content: string;
+  id:        string;
+  role:      "user" | "assistant";
+  content:   string;
+  toolCalls?: ToolCall[] | null;
+};
+
+type ChatSummary = {
+  id:           string;
+  title:        string;
+  model:        string;
+  updatedAt:    string;
+  messageCount: number;
+  preview:      string;
+};
+
+const MODEL_STORAGE_KEY = "vault-agent-model";
+
+const WELCOME: Message = {
+  id:      "welcome",
+  role:    "assistant",
+  content: "Hi! I'm Vault. I know your portfolio and can update it too — just tell me what you need.",
 };
 
 const STARTER_PROMPTS = [
@@ -16,31 +46,163 @@ const STARTER_PROMPTS = [
   "Run this month's snapshot",
 ];
 
+function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) {
+    return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  }
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+function modelLabel(models: GeminiModelOption[], id: string): string {
+  return models.find((m) => m.id === id)?.label ?? id;
+}
+
+function UsageBadge({ tier, label }: { tier: TokenUsageTier; label: string }) {
+  const s = TOKEN_TIER_STYLES[tier];
+  return (
+    <span
+      className="inline-block rounded px-1.5 py-0.5 font-mono text-[8px] leading-tight"
+      style={{ color: s.color, background: s.bg, border: `1px solid ${s.border}` }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ModelOptionDetails({ m, compact }: { m: GeminiModelOption; compact?: boolean }) {
+  return (
+    <>
+      <div
+        className={`font-mono leading-snug ${compact ? "text-[8px]" : "text-[9px]"}`}
+        style={{ color: "var(--text-dim)" }}
+      >
+        <span style={{ color: "var(--text-muted)" }}>Best for: </span>
+        {m.bestFor}
+      </div>
+      <div className={`${compact ? "mt-1" : "mt-1.5"}`}>
+        <UsageBadge tier={m.tokenUsage.tier} label={m.tokenUsage.label} />
+      </div>
+    </>
+  );
+}
+
 export function AgentPanel() {
   const router = useRouter();
-  const [open, setOpen]         = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput]       = useState("");
-  const [loading, setLoading]   = useState(false);
-  const messagesEndRef          = useRef<HTMLDivElement>(null);
-  const inputRef                = useRef<HTMLInputElement>(null);
+  const [open, setOpen]               = useState(false);
+  const [view, setView]               = useState<"chat" | "history">("chat");
+  const [messages, setMessages]       = useState<Message[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [chats, setChats]             = useState<ChatSummary[]>([]);
+  const [models, setModels]           = useState<GeminiModelOption[]>([]);
+  const [model, setModel]             = useState(DEFAULT_GEMINI_MODEL);
+  const [modelOpen, setModelOpen]     = useState(false);
+  const [input, setInput]             = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [loadingChats, setLoadingChats] = useState(false);
+  const messagesEndRef                = useRef<HTMLDivElement>(null);
+  const inputRef                      = useRef<HTMLInputElement>(null);
+
+  const loadModels = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agent/models");
+      if (res.ok) {
+        const data = await res.json();
+        setModels(data.models ?? []);
+      }
+    } catch {
+      /* keep fallback label from model id */
+    }
+  }, []);
+
+  const loadChats = useCallback(async () => {
+    setLoadingChats(true);
+    try {
+      const res = await fetch("/api/agent/chats");
+      if (res.ok) {
+        setChats(await res.json());
+      }
+    } finally {
+      setLoadingChats(false);
+    }
+  }, []);
+
+  const startNewChat = useCallback(() => {
+    setActiveChatId(null);
+    setMessages([WELCOME]);
+    setView("chat");
+    setInput("");
+  }, []);
+
+  const openChat = useCallback(async (chatId: string) => {
+    setLoading(true);
+    setView("chat");
+    try {
+      const res = await fetch(`/api/agent/chats/${chatId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setActiveChatId(data.id);
+      setModel(data.model ?? DEFAULT_GEMINI_MODEL);
+      setMessages(
+        data.messages.length > 0
+          ? data.messages.map((m: Message) => ({
+              id:        m.id,
+              role:      m.role,
+              content:   m.content,
+              toolCalls: m.toolCalls as ToolCall[] | null,
+            }))
+          : [WELCOME],
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const deleteChat = useCallback(async (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Delete this chat?")) return;
+    await fetch(`/api/agent/chats/${chatId}`, { method: "DELETE" });
+    setChats((prev) => prev.filter((c) => c.id !== chatId));
+    if (activeChatId === chatId) startNewChat();
+  }, [activeChatId, startNewChat]);
+
+  const selectedModelMeta = useMemo(
+    () => models.find((m) => m.id === model) ?? getModelGuide(model),
+    [models, model],
+  );
+
+  const modelOptions = models.length > 0 ? models : [getModelGuide(model)];
+
+  useEffect(() => {
+    const saved = localStorage.getItem(MODEL_STORAGE_KEY);
+    if (saved) setModel(saved);
+  }, []);
 
   useEffect(() => {
     if (open) {
+      loadModels();
+      loadChats();
       setTimeout(() => inputRef.current?.focus(), 100);
       if (messages.length === 0) {
-        setMessages([{
-          id:      "welcome",
-          role:    "assistant",
-          content: "Hi! I'm Vault. I know your portfolio and can update it too — just tell me what you need.",
-        }]);
+        setMessages([WELCOME]);
       }
     }
-  }, [open, messages.length]);
+  }, [open, loadModels, loadChats, messages.length]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  const selectModel = (id: string) => {
+    setModel(id);
+    localStorage.setItem(MODEL_STORAGE_KEY, id);
+    setModelOpen(false);
+  };
 
   const send = async (text: string) => {
     if (!text.trim() || loading) return;
@@ -50,41 +212,51 @@ export function AgentPanel() {
     setInput("");
     setLoading(true);
 
-    const apiMessages = [...messages, userMsg]
-      .filter((m) => m.id !== "welcome")
-      .map((m) => ({ role: m.role, content: m.content }));
-
     try {
-      const res  = await fetch("/api/agent", {
+      const res = await fetch("/api/agent", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ messages: apiMessages }),
+        body:    JSON.stringify({
+          message: text,
+          chatId:  activeChatId,
+          model,
+        }),
       });
       const data = await res.json();
 
       if (!res.ok) {
         setMessages((prev) => [...prev, {
-          id:      Date.now().toString() + "-err",
+          id:      `${Date.now()}-err`,
           role:    "assistant",
           content: data.error ?? "Sorry, something went wrong.",
         }]);
       } else {
+        if (data.chatId && !activeChatId) setActiveChatId(data.chatId);
         setMessages((prev) => [...prev, {
-          id:      Date.now().toString() + "-reply",
-          role:    "assistant",
-          content: data.reply ?? "Sorry, something went wrong.",
+          id:        `${Date.now()}-reply`,
+          role:      "assistant",
+          content:   data.reply ?? "Sorry, something went wrong.",
+          toolCalls: data.toolCalls?.length ? data.toolCalls : undefined,
         }]);
         if (data.refreshed) router.refresh();
+        loadChats();
       }
     } catch {
       setMessages((prev) => [...prev, {
-        id:      Date.now().toString() + "-err",
+        id:      `${Date.now()}-err`,
         role:    "assistant",
         content: "Connection error. Please try again.",
       }]);
     }
     setLoading(false);
   };
+
+  const showStarters =
+    view === "chat" &&
+    !loading &&
+    messages.length === 1 &&
+    messages[0]?.id === "welcome" &&
+    !activeChatId;
 
   return (
     <>
@@ -116,158 +288,338 @@ export function AgentPanel() {
         <div
           className="fixed bottom-24 right-6 z-50 flex flex-col overflow-hidden rounded-2xl"
           style={{
-            width:      380,
-            height:     520,
+            width:      400,
+            height:     560,
             maxWidth:   "calc(100vw - 48px)",
             background: "var(--bg-1)",
             border:     "1px solid var(--border-gold)",
             boxShadow:  "0 24px 64px rgba(0,0,0,0.5)",
           }}
         >
+          {/* Header */}
           <div
-            className="flex flex-shrink-0 items-center gap-3 px-4 py-3"
+            className="flex flex-shrink-0 flex-col gap-2 px-3 py-2.5"
             style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-2)" }}
           >
-            <div
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
-              style={{ background: "rgba(201,168,76,0.12)", border: "1px solid rgba(201,168,76,0.3)" }}
-            >
-              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden>
-                <path d="M10 2L3 6v8l7 4 7-4V6L10 2z" stroke="var(--gold)" strokeWidth="1.5" fill="none" />
-                <path d="M10 8v5M7 9.5l3-1.5 3 1.5" stroke="var(--gold)" strokeWidth="1.2" />
-              </svg>
-            </div>
-            <div>
-              <div className="font-sans text-sm font-medium" style={{ color: "var(--text)" }}>Vault</div>
-              <div className="font-mono text-[9px] tracking-wider" style={{ color: "var(--text-muted)" }}>
-                AI PORTFOLIO ASSISTANT
-              </div>
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <span className="live-dot" />
-              <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>LIVE</span>
-            </div>
-          </div>
-
-          <div className="flex-1 space-y-3 overflow-y-auto p-4">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
+            <div className="flex items-center gap-2">
+              {view === "history" ? (
+                <button
+                  type="button"
+                  onClick={() => setView("chat")}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-dim)" }}
+                  aria-label="Back to chat"
+                >
+                  ←
+                </button>
+              ) : (
                 <div
-                  className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm"
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg"
+                  style={{ background: "rgba(201,168,76,0.12)", border: "1px solid rgba(201,168,76,0.3)" }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden>
+                    <path d="M10 2L3 6v8l7 4 7-4V6L10 2z" stroke="var(--gold)" strokeWidth="1.5" fill="none" />
+                  </svg>
+                </div>
+              )}
+
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-sans text-sm font-medium" style={{ color: "var(--text)" }}>
+                  {view === "history" ? "Chat history" : "Vault"}
+                </div>
+                <div className="font-mono text-[9px] tracking-wider" style={{ color: "var(--text-muted)" }}>
+                  {view === "history" ? `${chats.length} conversations` : "AI PORTFOLIO ASSISTANT"}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => { loadChats(); setView("history"); }}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-xs"
+                style={{ border: "1px solid var(--border)", color: "var(--text-dim)" }}
+                title="History"
+                aria-label="Chat history"
+              >
+                ☰
+              </button>
+              <button
+                type="button"
+                onClick={startNewChat}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-sm"
+                style={{ border: "1px solid var(--border)", color: "var(--text-dim)" }}
+                title="New chat"
+                aria-label="New chat"
+              >
+                +
+              </button>
+            </div>
+
+            {view === "chat" && (
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setModelOpen((o) => !o)}
+                  className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left"
                   style={{
-                    background: msg.role === "user" ? "rgba(201,168,76,0.15)" : "var(--bg-3)",
-                    border:     msg.role === "user"
-                      ? "1px solid rgba(201,168,76,0.25)"
-                      : "1px solid var(--border)",
-                    color:      "var(--text)",
-                    whiteSpace: "pre-wrap",
-                    lineHeight: 1.55,
+                    background: "var(--bg-3)",
+                    border:     "1px solid var(--border)",
+                    color:      "var(--text-dim)",
                   }}
                 >
-                  {msg.content}
-                </div>
-              </div>
-            ))}
-
-            {loading && (
-              <div className="flex justify-start">
-                <div
-                  className="flex items-center gap-2 rounded-xl px-4 py-3"
-                  style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
-                >
-                  <span className="spinner" style={{ width: 12, height: 12 }} />
-                  <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>
-                    Thinking...
+                  <span className="font-mono text-[10px]">
+                    Model: <span style={{ color: "var(--gold-l)" }}>{modelLabel(models, model)}</span>
                   </span>
-                </div>
-              </div>
-            )}
+                  <span className="text-[10px]">{modelOpen ? "▲" : "▼"}</span>
+                </button>
 
-            {messages.length === 1 && !loading && (
-              <div className="mt-2 space-y-1.5">
-                {STARTER_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => send(prompt)}
-                    className="w-full rounded-xl px-3.5 py-2 text-left text-xs transition-all"
+                {!modelOpen && (
+                  <div
+                    className="mt-1.5 rounded-lg px-2 py-1.5"
+                    style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
+                  >
+                    <ModelOptionDetails m={selectedModelMeta} compact />
+                  </div>
+                )}
+
+                {modelOpen && (
+                  <div
+                    className="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-lg py-1"
                     style={{
                       background: "var(--bg-2)",
-                      border:     "1px solid var(--border)",
-                      color:      "var(--text-dim)",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = "rgba(201,168,76,0.3)";
-                      e.currentTarget.style.color = "var(--gold-l)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = "var(--border)";
-                      e.currentTarget.style.color = "var(--text-dim)";
+                      border:     "1px solid var(--border-gold)",
+                      boxShadow:  "0 8px 24px rgba(0,0,0,0.35)",
                     }}
                   >
-                    {prompt}
+                    {modelOptions.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => selectModel(m.id)}
+                        className="w-full border-b px-2.5 py-2.5 text-left transition-colors last:border-b-0"
+                        style={{
+                          background:  m.id === model ? "rgba(201,168,76,0.1)" : "transparent",
+                          borderColor: "var(--border)",
+                        }}
+                      >
+                        <div className="font-sans text-xs" style={{ color: "var(--text)" }}>
+                          {m.label}
+                          {m.id === DEFAULT_GEMINI_MODEL && (
+                            <span className="ml-1 font-mono text-[9px]" style={{ color: "var(--gold)" }}>
+                              default
+                            </span>
+                          )}
+                        </div>
+                        {m.description && (
+                          <div className="mt-0.5 font-mono text-[9px] leading-snug" style={{ color: "var(--text-muted)" }}>
+                            {m.description}
+                          </div>
+                        )}
+                        <div className="mt-1.5">
+                          <ModelOptionDetails m={m} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Body */}
+          {view === "history" ? (
+            <div className="flex-1 overflow-y-auto p-3">
+              {loadingChats && (
+                <div className="py-8 text-center font-mono text-xs" style={{ color: "var(--text-muted)" }}>
+                  Loading...
+                </div>
+              )}
+              {!loadingChats && chats.length === 0 && (
+                <div className="py-8 text-center font-mono text-xs" style={{ color: "var(--text-muted)" }}>
+                  No chats yet. Start a conversation!
+                </div>
+              )}
+              <div className="space-y-1.5">
+                {chats.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => openChat(c.id)}
+                    className="group w-full rounded-xl px-3 py-2.5 text-left transition-all"
+                    style={{
+                      background: activeChatId === c.id ? "rgba(201,168,76,0.1)" : "var(--bg-2)",
+                      border:     `1px solid ${activeChatId === c.id ? "rgba(201,168,76,0.3)" : "var(--border)"}`,
+                    }}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-sans text-xs font-medium" style={{ color: "var(--text)" }}>
+                          {c.title}
+                        </div>
+                        <div className="mt-0.5 truncate font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
+                          {c.preview || `${c.messageCount} messages`}
+                        </div>
+                        <div className="mt-1 font-mono text-[9px]" style={{ color: "var(--text-dim)" }}>
+                          {modelLabel(models, c.model)} · {formatWhen(c.updatedAt)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => deleteChat(c.id, e)}
+                        className="flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] opacity-0 transition-opacity group-hover:opacity-100"
+                        style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+                        aria-label="Delete chat"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </button>
                 ))}
               </div>
-            )}
+            </div>
+          ) : (
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div className="max-w-[88%]">
+                    <div
+                      className="rounded-xl px-3.5 py-2.5 text-sm"
+                      style={{
+                        background: msg.role === "user" ? "rgba(201,168,76,0.15)" : "var(--bg-3)",
+                        border:     msg.role === "user"
+                          ? "1px solid rgba(201,168,76,0.25)"
+                          : "1px solid var(--border)",
+                        color:      "var(--text)",
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {msg.content}
+                    </div>
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div
+                        className="mt-1.5 rounded-lg px-2.5 py-2"
+                        style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}
+                      >
+                        <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--gold)" }}>
+                          Actions taken
+                        </div>
+                        {msg.toolCalls.map((tc) => (
+                          <div key={tc.name} className="mt-1 font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
+                            <span style={{ color: "var(--text-dim)" }}>{tc.name}</span>
+                            {" → "}
+                            {tc.result.slice(0, 100)}
+                            {tc.result.length > 100 ? "…" : ""}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
 
-            <div ref={messagesEndRef} />
-          </div>
+              {loading && (
+                <div className="flex justify-start">
+                  <div
+                    className="flex items-center gap-2 rounded-xl px-4 py-3"
+                    style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
+                  >
+                    <span className="spinner" style={{ width: 12, height: 12 }} />
+                    <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>
+                      Thinking...
+                    </span>
+                  </div>
+                </div>
+              )}
 
-          <div
-            className="flex-shrink-0 p-3"
-            style={{ borderTop: "1px solid var(--border)" }}
-          >
+              {showStarters && (
+                <div className="mt-2 space-y-1.5">
+                  {STARTER_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => send(prompt)}
+                      className="w-full rounded-xl px-3.5 py-2 text-left text-xs transition-all"
+                      style={{
+                        background: "var(--bg-2)",
+                        border:     "1px solid var(--border)",
+                        color:      "var(--text-dim)",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = "rgba(201,168,76,0.3)";
+                        e.currentTarget.style.color = "var(--gold-l)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = "var(--border)";
+                        e.currentTarget.style.color = "var(--text-dim)";
+                      }}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+
+          {/* Input */}
+          {view === "chat" && (
             <div
-              className="flex items-center gap-2 rounded-xl px-3 py-2"
-              style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
+              className="flex-shrink-0 p-3"
+              style={{ borderTop: "1px solid var(--border)" }}
             >
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send(input);
-                  }
-                }}
-                placeholder="Update units, ask about portfolio..."
-                disabled={loading}
-                className="flex-1 bg-transparent font-sans text-sm outline-none"
-                style={{ color: "var(--text)" }}
-              />
-              <button
-                type="button"
-                onClick={() => send(input)}
-                disabled={loading || !input.trim()}
-                className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all"
-                style={{
-                  background: input.trim() ? "var(--gold)" : "var(--bg-3)",
-                  opacity:    loading ? 0.5 : 1,
-                }}
-                aria-label="Send message"
+              <div
+                className="flex items-center gap-2 rounded-xl px-3 py-2"
+                style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                  <path
-                    d="M2 6h8M7 3l3 3-3 3"
-                    stroke={input.trim() ? "#111" : "var(--text-muted)"}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send(input);
+                    }
+                  }}
+                  placeholder="Update units, ask about portfolio..."
+                  disabled={loading}
+                  className="flex-1 bg-transparent font-sans text-sm outline-none"
+                  style={{ color: "var(--text)" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => send(input)}
+                  disabled={loading || !input.trim()}
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all"
+                  style={{
+                    background: input.trim() ? "var(--gold)" : "var(--bg-3)",
+                    opacity:    loading ? 0.5 : 1,
+                  }}
+                  aria-label="Send message"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                    <path
+                      d="M2 6h8M7 3l3 3-3 3"
+                      stroke={input.trim() ? "#111" : "var(--text-muted)"}
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div className="mt-2 flex justify-center">
+                <span className="font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
+                  Powered by Gemini · Chats saved to history
+                </span>
+              </div>
             </div>
-            <div className="mt-2 flex justify-center">
-              <span className="font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
-                Powered by Gemini · Actions are real and immediate
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </>

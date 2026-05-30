@@ -237,3 +237,31 @@ model NetWorthConfig {
   liquidBalance  Float    @default(500000)
   updatedAt      DateTime @updatedAt
 }
+
+// ──────────────────────────────────────────
+// VAULT AI AGENT
+// ──────────────────────────────────────────
+
+model AgentChat {
+  id        String         @id @default(uuid())
+  ownerId   String         @default("primary")
+  title     String         @default("New chat")
+  model     String
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  messages  AgentMessage[]
+
+  @@index([ownerId, updatedAt])
+}
+
+model AgentMessage {
+  id        String    @id @default(uuid())
+  chatId    String
+  role      String    // user | assistant
+  content   String    @db.Text
+  toolCalls Json?
+  createdAt DateTime  @default(now())
+  chat      AgentChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+}
