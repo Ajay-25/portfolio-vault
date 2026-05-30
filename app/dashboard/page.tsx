@@ -1,12 +1,14 @@
+import { Suspense } from "react";
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { fetchBulkNAVs } from "@/lib/apis/amfi";
 import { fetchUSDINR } from "@/lib/apis/prices";
 import { getUrgentInsuranceRenewals } from "@/lib/insurance-data";
 import { formatINR, absoluteReturn } from "@/lib/utils/finance";
 import { TopBar } from "@/components/layout/top-bar";
 import { NiftyTrigger } from "@/components/dashboard/nifty-trigger";
 import { SIPCalendar } from "@/components/dashboard/sip-calendar";
-import Link from "next/link";
+import { MFHoldingsPreview } from "@/components/dashboard/mf-holdings-preview";
+import { SkeletonTable } from "@/components/ui/skeletons";
 
 export const revalidate = 300; // ISR: revalidate every 5 minutes
 
@@ -22,14 +24,10 @@ async function getDashboardData() {
     getUrgentInsuranceRenewals(30),
   ]);
 
-  // Get unique MF scheme codes across all portfolios
-  const allCodes = [...new Set(portfolios.flatMap((p) => p.mfHoldings.map((h) => h.schemeCode)))];
-  const navMap   = await fetchBulkNAVs(allCodes);
-
-  // Calculate portfolio values
+  // Calculate portfolio values (avgNAV for MF — live NAVs stream in via MFHoldingsPreview)
   const portfolioValues = portfolios.map((portfolio) => {
     const mfValue = portfolio.mfHoldings.reduce((sum, h) => {
-      const nav = navMap.get(h.schemeCode)?.nav ?? 0;
+      const nav = h.avgNAV ?? 0;
       return sum + h.units * nav;
     }, 0);
 
@@ -61,11 +59,11 @@ async function getDashboardData() {
   const totalMFInvested = portfolioValues.reduce((s, p) => s + p.mfInvested, 0);
   const totalGain       = totalMFInvested > 0 ? absoluteReturn(totalMFInvested, totalNetWorth) : 0;
 
-  return { portfolioValues, totalNetWorth, totalGain, triggers, actions, navMap, usdInr, urgentRenewals };
+  return { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals };
 }
 
 export default async function DashboardPage() {
-  const { portfolioValues, totalNetWorth, totalGain, triggers, actions, navMap, urgentRenewals } =
+  const { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals } =
     await getDashboardData();
 
   const myPortfolio  = portfolioValues.find((p) => p.type === "primary");
@@ -335,75 +333,23 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Top MF Holdings Preview ───────────────────────────────── */}
+        {/* ── Top MF Holdings Preview (live NAVs stream in) ───────────── */}
         {myPortfolio && myPortfolio.mfHoldings.length > 0 && (
-          <div className="card animate-slide-up stagger-6 overflow-hidden">
-            <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6" style={{ borderBottom: "1px solid var(--border)" }}>
-              <div>
-                <div className="stat-label mb-0.5">Live NAVs</div>
-                <div className="text-sm font-medium" style={{ color: "var(--text)" }}>My Mutual Fund Holdings</div>
+          <Suspense
+            fallback={
+              <div className="card">
+                <div
+                  className="px-6 py-4"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
+                  <div className="skeleton skeleton-text" style={{ width: 160 }} />
+                </div>
+                <SkeletonTable rows={6} />
               </div>
-              <Link
-                href="/dashboard/wealth/mine/mf"
-                className="font-mono text-xs hover:opacity-80 transition-opacity"
-                style={{ color: "var(--gold)" }}
-              >
-                VIEW ALL →
-              </Link>
-            </div>
-            <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Fund</th>
-                  <th>Category</th>
-                  <th style={{ textAlign: "right" }}>Units</th>
-                  <th style={{ textAlign: "right" }}>NAV · Date</th>
-                  <th style={{ textAlign: "right" }}>Value</th>
-                  <th style={{ textAlign: "right" }}>SIP/mo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {myPortfolio.mfHoldings.slice(0, 6).map((h) => {
-                  const navResult = navMap.get(h.schemeCode);
-                  const nav       = navResult?.nav;
-                  const navDate   = navResult?.date;
-                  const value     = nav ? h.units * nav : null;
-                  return (
-                    <tr key={h.id}>
-                      <td>
-                        <div className="text-sm font-medium" style={{ color: "var(--text)" }}>{h.schemeName}</div>
-                        <div className="font-mono text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{h.schemeCode}</div>
-                      </td>
-                      <td>
-                        <span className={`badge badge-${h.category}`}>{h.category}</span>
-                      </td>
-                      <td className="font-mono text-right text-sm" style={{ color: "var(--text-dim)" }}>
-                        {h.units.toLocaleString("en-IN")}
-                      </td>
-                      <td className="font-mono text-right" style={{ color: "var(--text)" }}>
-                        <div className="text-sm font-medium">
-                          {nav ? `₹${nav.toFixed(2)}` : "—"}
-                        </div>
-                        {navDate && (
-                          <div className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                            {navDate}
-                          </div>
-                        )}
-                      </td>
-                      <td className="font-mono text-right text-sm" style={{ color: "var(--gold-l)", fontWeight: 500 }}>
-                        {value ? formatINR(value, true) : "—"}
-                      </td>
-                      <td className="font-mono text-right text-sm" style={{ color: "var(--teal)" }}>
-                        {h.sipAmount ? formatINR(h.sipAmount) : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
-          </div>
+            }
+          >
+            <MFHoldingsPreview portfolioId="portfolio-primary" />
+          </Suspense>
         )}
 
       </main>

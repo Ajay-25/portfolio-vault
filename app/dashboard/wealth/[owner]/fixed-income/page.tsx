@@ -9,7 +9,7 @@ import {
   type WealthOwnerSlug,
 } from "@/lib/wealth-config";
 
-export const revalidate = 300;
+export const revalidate = 0;
 
 export default async function WealthFixedIncomePage({
   params,

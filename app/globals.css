@@ -756,3 +756,22 @@ html.theme-dark body::before {
   overflow: hidden;
   white-space: nowrap;
 }
+
+/* ── Skeleton loader ──────────────────────────────────────────────────────── */
+@keyframes skeleton-shimmer {
+  0%   { opacity: 0.4; }
+  50%  { opacity: 0.8; }
+  100% { opacity: 0.4; }
+}
+
+.skeleton {
+  background:    var(--bg-3);
+  border-radius: 6px;
+  animation:     skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-text  { height: 11px; border-radius: 4px; }
+.skeleton-title { height: 22px; border-radius: 6px; }
+.skeleton-hero  { height: 48px; border-radius: 8px; }
+.skeleton-row   { height: 44px; border-radius: 6px; }
+.skeleton-card  { border-radius: 14px; }
