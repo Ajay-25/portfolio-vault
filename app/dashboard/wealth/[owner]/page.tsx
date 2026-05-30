@@ -1,8 +1,9 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/layout/top-bar";
 import { WealthSubNav } from "@/components/dashboard/wealth-sub-nav";
-import { WealthSummaryView } from "@/components/dashboard/wealth-summary-view";
-import { getWealthSummaryData } from "@/lib/wealth-summary";
+import { WealthSummaryContent } from "@/components/dashboard/wealth-summary-content";
+import { WealthSummaryFallback } from "@/components/dashboard/suspense-fallbacks";
 import {
   resolveOwner,
   wealthTopBarTitle,
@@ -20,9 +21,6 @@ export default async function WealthSummaryPage({
   const owner = resolveOwner(ownerSlug);
   if (!owner) notFound();
 
-  const data = await getWealthSummaryData(ownerSlug);
-  if (!data) notFound();
-
   const slug = owner.slug as WealthOwnerSlug;
 
   return (
@@ -30,7 +28,9 @@ export default async function WealthSummaryPage({
       <TopBar title={wealthTopBarTitle(slug, "")} />
       <main className="min-w-0 p-4 md:p-6">
         <WealthSubNav owner={slug} />
-        <WealthSummaryView data={data} />
+        <Suspense fallback={<WealthSummaryFallback />}>
+          <WealthSummaryContent ownerSlug={ownerSlug} />
+        </Suspense>
       </main>
     </div>
   );

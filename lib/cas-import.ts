@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
 
 export const VALID_PORTFOLIO_IDS = ["portfolio-primary", "portfolio-mom"] as const;
 export type ValidPortfolioId = (typeof VALID_PORTFOLIO_IDS)[number];
@@ -143,8 +144,10 @@ export async function upsertCasHoldings(
         },
       });
 
+      const displayName = formatMFSchemeName(h.schemeName);
+
       const data = {
-        schemeName: h.schemeName,
+        schemeName: displayName,
         units: h.units,
         ...(h.avgNAV != null ? { avgNAV: h.avgNAV } : {}),
       };
@@ -157,7 +160,7 @@ export async function upsertCasHoldings(
         summary.updated++;
         summary.holdings.push({
           schemeCode: h.schemeCode,
-          schemeName: h.schemeName,
+          schemeName: displayName,
           units: h.units,
           action: "updated",
         });
@@ -172,7 +175,7 @@ export async function upsertCasHoldings(
         summary.created++;
         summary.holdings.push({
           schemeCode: h.schemeCode,
-          schemeName: h.schemeName,
+          schemeName: displayName,
           units: h.units,
           action: "created",
         });
@@ -512,6 +515,7 @@ async function enrichHoldingsForPreview(
     return {
       ...h,
       schemeCode: code,
+      schemeName: formatMFSchemeName(h.schemeName),
       schemeInNavCache: code ? navSet.has(code) : false,
       rowWarning,
     };

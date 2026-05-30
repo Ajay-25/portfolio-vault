@@ -7,6 +7,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
 
 const CACHE_TTL_MS    = 4 * 60 * 60 * 1000;  // 4 hours
 const AMFI_BULK_URL   = "https://www.amfiindia.com/spages/NAVAll.txt";
@@ -75,9 +76,11 @@ async function fetchFromMFAPI(schemeCode: string): Promise<NavResult | null> {
     const res  = await fetch(`${MFAPI_BASE}/${schemeCode}`, { cache: "no-store" });
     if (!res.ok) return null;
     const data = await res.json();
+    if (!Array.isArray(data.data) || data.data.length === 0) return null;
     const nav  = parseFloat(data.data[0].nav);
     const date = data.data[0].date as string;
     const name = data.meta.scheme_name as string;
+    if (isNaN(nav) || nav <= 0) return null;
     return { schemeCode, schemeName: name, nav, date, cached: false };
   } catch {
     return null;
@@ -96,10 +99,11 @@ async function upsertCache(
   navDate:    string,
   schemeName: string
 ): Promise<void> {
+  const displayName = formatMFSchemeName(schemeName);
   await prisma.navCache.upsert({
     where:  { schemeCode },
-    update: { nav, navDate, schemeName },
-    create: { schemeCode, nav, navDate, schemeName },
+    update: { nav, navDate, schemeName: displayName },
+    create: { schemeCode, nav, navDate, schemeName: displayName },
   });
 }
 

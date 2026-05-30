@@ -1,15 +1,16 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/layout/top-bar";
-import { FixedIncomeView } from "@/components/dashboard/fixed-income-view";
 import { WealthSubNav } from "@/components/dashboard/wealth-sub-nav";
-import { getFixedIncomePageData } from "@/lib/fixed-income-data";
+import { FixedIncomeContent } from "@/components/dashboard/fixed-income-content";
+import { FixedIncomeFallback } from "@/components/dashboard/suspense-fallbacks";
 import {
   resolveOwner,
   wealthTopBarTitle,
   type WealthOwnerSlug,
 } from "@/lib/wealth-config";
 
-export const revalidate = 0;
+export const revalidate = 3600;
 
 export default async function WealthFixedIncomePage({
   params,
@@ -20,9 +21,6 @@ export default async function WealthFixedIncomePage({
   const owner = resolveOwner(ownerSlug);
   if (!owner) notFound();
 
-  const data = await getFixedIncomePageData(ownerSlug);
-  if (!data) notFound();
-
   const slug = owner.slug as WealthOwnerSlug;
 
   return (
@@ -30,7 +28,9 @@ export default async function WealthFixedIncomePage({
       <TopBar title={wealthTopBarTitle(slug, "fixed-income")} />
       <main className="min-w-0 p-4 md:p-6">
         <WealthSubNav owner={slug} />
-        <FixedIncomeView data={data} />
+        <Suspense fallback={<FixedIncomeFallback />}>
+          <FixedIncomeContent ownerSlug={ownerSlug} />
+        </Suspense>
       </main>
     </div>
   );

@@ -1,15 +1,16 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/layout/top-bar";
-import { InsuranceView } from "@/components/dashboard/insurance-view";
 import { WealthSubNav } from "@/components/dashboard/wealth-sub-nav";
-import { getInsurancePolicies, getInsuranceSummary } from "@/lib/insurance-data";
+import { InsuranceOwnerContent } from "@/components/dashboard/insurance-owner-content";
+import { InsuranceFallback } from "@/components/dashboard/suspense-fallbacks";
 import {
   resolveOwner,
   wealthTopBarTitle,
   type WealthOwnerSlug,
 } from "@/lib/wealth-config";
 
-export const revalidate = 0;
+export const revalidate = 3600;
 
 export default async function InsurancePage({
   params,
@@ -22,22 +23,14 @@ export default async function InsurancePage({
 
   const slug = owner.slug as WealthOwnerSlug;
 
-  const [policies, summary] = await Promise.all([
-    getInsurancePolicies(owner.portfolioId),
-    getInsuranceSummary(owner.portfolioId),
-  ]);
-
   return (
     <div className="min-w-0 overflow-x-hidden">
       <TopBar title={wealthTopBarTitle(slug, "insurance")} />
       <main className="min-w-0 p-4 md:p-6">
         <WealthSubNav owner={slug} />
-        <InsuranceView
-          policies={policies}
-          summary={summary}
-          owner={slug}
-          portfolioId={owner.portfolioId}
-        />
+        <Suspense fallback={<InsuranceFallback />}>
+          <InsuranceOwnerContent portfolioId={owner.portfolioId} owner={slug} />
+        </Suspense>
       </main>
     </div>
   );

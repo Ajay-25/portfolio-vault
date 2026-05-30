@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
-import { fetchUSDINR } from "@/lib/apis/prices";
+import { getAllPortfolios, getTriggers, getActionItems } from "@/lib/data/portfolio";
+import { getUSDINR } from "@/lib/data/fx-server";
 import { getUrgentInsuranceRenewals } from "@/lib/insurance-data";
 import { formatINR, absoluteReturn } from "@/lib/utils/finance";
 import { TopBar } from "@/components/layout/top-bar";
@@ -14,13 +14,10 @@ export const revalidate = 300; // ISR: revalidate every 5 minutes
 
 async function getDashboardData() {
   const [portfolios, triggers, actions, usdInr, urgentRenewals] = await Promise.all([
-    prisma.portfolio.findMany({
-      include: { mfHoldings: true, stockHoldings: true, sipSchedules: true },
-      orderBy: { type: "asc" },
-    }),
-    prisma.trigger.findMany({ orderBy: { label: "asc" } }),
-    prisma.actionItem.findMany({ where: { completed: false }, orderBy: { priority: "asc" }, take: 5 }),
-    fetchUSDINR(),
+    getAllPortfolios(),
+    getTriggers(),
+    getActionItems(5),
+    getUSDINR(),
     getUrgentInsuranceRenewals(30),
   ]);
 

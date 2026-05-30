@@ -40,22 +40,22 @@ async function main() {
 
   // ── My Mutual Funds ─────────────────────────────────────────────────────
   const myFunds = [
-    { schemeCode: "122639", schemeName: "Parag Parikh Flexi Cap",       units: 2800, sipAmount: 22000, sipDate: 7,  category: "Flexi" },
-    { schemeCode: "100016", schemeName: "HDFC Flexi Cap",               units: 1100, sipAmount: 18000, sipDate: 7,  category: "Flexi" },
-    { schemeCode: "119028", schemeName: "HDFC Mid Cap Opportunities",   units: 850,  sipAmount: 17000, sipDate: 7,  category: "Mid"   },
-    { schemeCode: "118825", schemeName: "Nippon India Small Cap",       units: 580,  sipAmount: 16000, sipDate: 7,  category: "Small" },
-    { schemeCode: "120586", schemeName: "ICICI Pru Bluechip",           units: 3100, sipAmount: 12000, sipDate: 7,  category: "Large" },
-    { schemeCode: "120255", schemeName: "Kotak Midcap",                 units: 1550, sipAmount: 8000,  sipDate: 7,  category: "Mid"   },
-    { schemeCode: "135798", schemeName: "ICICI Nifty Next 50 Index",    units: 480,  sipAmount: 12000, sipDate: 28, category: "Index" },
-    { schemeCode: "143979", schemeName: "ICICI Nifty Midcap 150 Index", units: 960,  sipAmount: 10000, sipDate: 28, category: "Index" },
-    { schemeCode: "120685", schemeName: "ICICI Nifty 50 Index",         units: 2600, sipAmount: 5000,  sipDate: 28, category: "Index" },
-    { schemeCode: "135759", schemeName: "ICICI Gold ETF FoF",           units: 1800, sipAmount: 5000,  sipDate: 28, category: "Gold"  },
+    { schemeCode: "122639", schemeName: "Parag Parikh Flexi Cap Fund - Growth (Direct)",       units: 2800, sipAmount: 22000, sipDate: 7,  category: "Flexi" },
+    { schemeCode: "118955", schemeName: "HDFC Flexi Cap Fund - Growth (Direct)",              units: 1100, sipAmount: 18000, sipDate: 7,  category: "Flexi" },
+    { schemeCode: "118989", schemeName: "HDFC Mid Cap Fund - Growth (Direct)",                units: 850,  sipAmount: 17000, sipDate: 7,  category: "Mid"   },
+    { schemeCode: "118778", schemeName: "Nippon India Small Cap Fund - Growth (Direct)",      units: 580,  sipAmount: 16000, sipDate: 7,  category: "Small" },
+    { schemeCode: "120586", schemeName: "ICICI Prudential Large Cap Fund - Growth (Direct)", units: 3100, sipAmount: 12000, sipDate: 7,  category: "Large" },
+    { schemeCode: "119775", schemeName: "Kotak Midcap Fund - Growth (Direct)",                units: 1550, sipAmount: 8000,  sipDate: 7,  category: "Mid"   },
+    { schemeCode: "120684", schemeName: "ICICI Prudential Nifty Next 50 Index - Growth (Direct)", units: 480,  sipAmount: 12000, sipDate: 28, category: "Index" },
+    { schemeCode: "149389", schemeName: "ICICI Prudential Nifty Midcap 150 Index - Growth (Direct)", units: 960,  sipAmount: 10000, sipDate: 28, category: "Index" },
+    { schemeCode: "120620", schemeName: "ICICI Prudential Nifty 50 Index - Growth (Direct)",  units: 2600, sipAmount: 5000,  sipDate: 28, category: "Index" },
+    { schemeCode: "120685", schemeName: "ICICI Prudential Gold ETF FOF - Growth (Direct)",    units: 1800, sipAmount: 5000,  sipDate: 28, category: "Gold"  },
   ];
 
   for (const fund of myFunds) {
     await prisma.mFHolding.upsert({
       where:  { portfolioId_schemeCode: { portfolioId: myPortfolio.id, schemeCode: fund.schemeCode } },
-      update: { units: fund.units },
+      update: { units: fund.units, schemeName: fund.schemeName, schemeCode: fund.schemeCode },
       create: { portfolioId: myPortfolio.id, ...fund },
     });
   }
@@ -63,17 +63,17 @@ async function main() {
 
   // ── Mom's Mutual Funds ───────────────────────────────────────────────────
   const momFunds = [
-    { schemeCode: "122639", schemeName: "Parag Parikh Flexi Cap",       units: 240,  sipAmount: 10000, sipDate: 7,  category: "Flexi"  },
-    { schemeCode: "120578", schemeName: "ICICI Equity & Debt",          units: 1050, sipAmount: 9000,  sipDate: 7,  category: "Hybrid" },
-    { schemeCode: "147946", schemeName: "Bandhan Small Cap",            units: 2100, sipAmount: 7000,  sipDate: 28, category: "Small"  },
-    { schemeCode: "120255", schemeName: "Kotak Midcap",                 units: 210,  sipAmount: 5000,  sipDate: 28, category: "Mid"    },
-    { schemeCode: "119189", schemeName: "HDFC Balanced Advantage",      units: 0,    sipAmount: 4000,  sipDate: 28, category: "BAF"    },
+    { schemeCode: "122639", schemeName: "Parag Parikh Flexi Cap Fund - Growth (Direct)",  units: 240,  sipAmount: 10000, sipDate: 7,  category: "Flexi"  },
+    { schemeCode: "120251", schemeName: "ICICI Prudential Equity & Debt Fund - Growth (Direct)", units: 1050, sipAmount: 9000,  sipDate: 7,  category: "Hybrid" },
+    { schemeCode: "147946", schemeName: "Bandhan Small Cap Fund - Growth (Direct)",       units: 2100, sipAmount: 7000,  sipDate: 28, category: "Small"  },
+    { schemeCode: "119775", schemeName: "Kotak Midcap Fund - Growth (Direct)",            units: 210,  sipAmount: 5000,  sipDate: 28, category: "Mid"    },
+    { schemeCode: "118968", schemeName: "HDFC Balanced Advantage Fund - Growth (Direct)", units: 0,    sipAmount: 4000,  sipDate: 28, category: "BAF"    },
   ];
 
   for (const fund of momFunds) {
     await prisma.mFHolding.upsert({
       where:  { portfolioId_schemeCode: { portfolioId: momPortfolio.id, schemeCode: fund.schemeCode } },
-      update: { units: fund.units },
+      update: { units: fund.units, schemeName: fund.schemeName, schemeCode: fund.schemeCode },
       create: { portfolioId: momPortfolio.id, ...fund },
     });
   }

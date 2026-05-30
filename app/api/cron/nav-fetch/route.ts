@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { forceRefreshAllNAVs } from "@/lib/apis/amfi";
+import { invalidateNAVCache } from "@/lib/data/nav-server";
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
@@ -9,9 +10,12 @@ export async function GET(req: NextRequest) {
 
   const result = await forceRefreshAllNAVs();
 
+  await invalidateNAVCache();
+
   return NextResponse.json({
     ...result,
-    source:    "AMFI NAVAll.txt",
-    timestamp: new Date().toISOString(),
+    cacheInvalidated: true,
+    source:           "AMFI NAVAll.txt",
+    timestamp:        new Date().toISOString(),
   });
 }

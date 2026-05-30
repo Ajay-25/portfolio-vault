@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getInsurancePolicies as getCachedInsurancePolicies } from "@/lib/data/portfolio";
 
 export type InsuranceSummary = {
   termSumAssured: number;
@@ -32,10 +33,7 @@ export type MaturityAlert = {
 };
 
 export async function getInsurancePolicies(portfolioId: string) {
-  return prisma.insurancePolicy.findMany({
-    where: { portfolioId },
-    orderBy: { type: "asc" },
-  });
+  return getCachedInsurancePolicies(portfolioId);
 }
 
 export async function getInsuranceSummary(portfolioId: string): Promise<InsuranceSummary> {

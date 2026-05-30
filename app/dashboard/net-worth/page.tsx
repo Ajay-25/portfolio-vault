@@ -1,12 +1,11 @@
+import { Suspense } from "react";
 import { TopBar } from "@/components/layout/top-bar";
-import { NetWorthView } from "@/components/dashboard/net-worth-view";
-import { getNetWorthData } from "@/lib/net-worth";
+import { NetWorthContent } from "@/components/dashboard/net-worth-content";
+import { NetWorthFallback } from "@/components/dashboard/suspense-fallbacks";
 
 export const revalidate = 300;
 
-export default async function NetWorthPage() {
-  const data = await getNetWorthData();
-
+export default function NetWorthPage() {
   return (
     <div>
       <TopBar title="Overview · Net Worth" />
@@ -24,7 +23,9 @@ export default async function NetWorthPage() {
           Total <em style={{ color: "var(--gold)" }}>net worth aggregator</em>
         </h1>
 
-        <NetWorthView initial={data} />
+        <Suspense fallback={<NetWorthFallback />}>
+          <NetWorthContent />
+        </Suspense>
       </main>
     </div>
   );

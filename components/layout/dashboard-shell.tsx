@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { SidebarProvider } from "@/components/layout/sidebar-context";
+import { AgentPanel } from "@/components/agent/agent-panel";
 
 function SidebarFallback() {
   return (
@@ -25,6 +26,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </Suspense>
 
         <div className="min-w-0 overflow-x-hidden md:ml-[220px]">{children}</div>
+        <AgentPanel />
       </div>
     </SidebarProvider>
   );

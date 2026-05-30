@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { MfRow, PortfolioPageData, StockRow } from "@/lib/portfolio-data";
 import { formatINR } from "@/lib/utils/finance";
+import { LiveStocksTable } from "@/components/dashboard/live-stocks-table";
 
 interface PortfolioViewProps {
   data: PortfolioPageData;
@@ -171,6 +172,7 @@ export function PortfolioView({ data }: PortfolioViewProps) {
         <StockSection
           rows={data.filteredStockRows}
           total={data.filteredStockTotal}
+          usdInr={data.usdInr}
           editMode={editMode}
           onDelete={deleteStock}
         />
@@ -382,11 +384,13 @@ function MfRowCells({
 function StockSection({
   rows,
   total,
+  usdInr,
   editMode,
   onDelete,
 }: {
   rows: StockRow[];
   total: number;
+  usdInr: number;
   editMode: boolean;
   onDelete: (id: string) => void;
 }) {
@@ -407,116 +411,12 @@ function StockSection({
         </span>
       </div>
       <div className="min-w-0 overflow-x-auto">
-      <table className="data-table min-w-[640px]">
-        <thead>
-          <tr>
-            <th>Company</th>
-            <th>Exchange</th>
-            <th style={{ textAlign: "right" }}>Qty</th>
-            <th style={{ textAlign: "right" }}>Avg Price</th>
-            <th style={{ textAlign: "right" }}>CMP</th>
-            <th style={{ textAlign: "right" }}>Value (₹)</th>
-            <th style={{ textAlign: "right" }}>P&L</th>
-            <th>Action</th>
-            {editMode && <th />}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((s) => {
-            const pnl = s.cmp !== null ? s.value - s.investedInr : null;
-            return (
-              <tr key={s.id}>
-                <td>
-                  <div className="text-sm font-medium" style={{ color: "var(--text)" }}>
-                    {s.displayName ?? s.symbol}
-                  </div>
-                  <div className="font-mono text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    {s.symbol}
-                  </div>
-                </td>
-                <td>
-                  <span className={`badge ${s.exchange === "NSE" ? "badge-blue" : "badge-purple"}`}>
-                    {s.exchange}
-                  </span>
-                </td>
-                <td className="font-mono text-right text-sm" style={{ color: "var(--text-dim)" }}>
-                  {s.qty}
-                </td>
-                <td className="font-mono text-right text-sm" style={{ color: "var(--text-dim)" }}>
-                  {s.currency === "USD" ? "$" : "₹"}
-                  {s.avgPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                </td>
-                <td className="font-mono text-right text-sm" style={{ color: "var(--text)" }}>
-                  {s.cmp !== null ? (
-                    <>
-                      {s.currency === "USD" ? "$" : "₹"}
-                      {s.cmp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                      {s.changePct !== null && (
-                        <span
-                          className="text-[10px] ml-1"
-                          style={{ color: s.changePct >= 0 ? "var(--teal)" : "var(--red)" }}
-                        >
-                          {s.changePct >= 0 ? "+" : ""}
-                          {s.changePct.toFixed(1)}%
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="font-mono text-right text-sm font-medium" style={{ color: "var(--gold-l)" }}>
-                  {formatINR(s.value, true)}
-                </td>
-                <td
-                  className="font-mono text-right text-sm"
-                  style={{
-                    color:
-                      pnl === null
-                        ? "var(--text-muted)"
-                        : pnl >= 0
-                          ? "var(--teal)"
-                          : "var(--red)",
-                  }}
-                >
-                  {pnl !== null ? (
-                    <>
-                      {formatINR(pnl, true)}
-                      {s.gain !== null && (
-                        <span className="text-[10px] block">
-                          {s.gain >= 0 ? "+" : ""}
-                          {(s.gain * 100).toFixed(1)}%
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td>
-                  {s.action && (
-                    <span className="font-mono text-[10px]" style={{ color: "var(--text-dim)" }}>
-                      {s.action}
-                    </span>
-                  )}
-                </td>
-                {editMode && (
-                  <td>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(s.id)}
-                      className="text-[10px] font-mono px-2 py-1 rounded"
-                      style={{ color: "var(--red)" }}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+        <LiveStocksTable
+          holdings={rows}
+          usdInr={usdInr}
+          editMode={editMode}
+          onDelete={onDelete}
+        />
       </div>
     </div>
   );

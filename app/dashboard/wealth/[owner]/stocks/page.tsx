@@ -1,8 +1,9 @@
+import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { TopBar } from "@/components/layout/top-bar";
-import { PortfolioView } from "@/components/dashboard/portfolio-view";
 import { WealthMarketTabs, WealthSubNav } from "@/components/dashboard/wealth-sub-nav";
-import { getPortfolioPageData } from "@/lib/portfolio-data";
+import { WealthPortfolioContent } from "@/components/dashboard/wealth-portfolio-content";
+import { PortfolioContentFallback } from "@/components/dashboard/suspense-fallbacks";
 import {
   resolveOwner,
   stockViewFromMarket,
@@ -12,7 +13,7 @@ import {
   type StockMarket,
 } from "@/lib/wealth-config";
 
-export const revalidate = 300;
+export const revalidate = 3600;
 
 export default async function WealthStocksPage({
   params,
@@ -33,8 +34,6 @@ export default async function WealthStocksPage({
   }
 
   const market = stockViewFromMarket(marketParam, slug);
-  const data = await getPortfolioPageData(owner.portfolioId, market);
-  if (!data) notFound();
 
   return (
     <div className="min-w-0 overflow-x-hidden">
@@ -42,7 +41,9 @@ export default async function WealthStocksPage({
       <main className="min-w-0 p-4 md:p-6">
         <WealthSubNav owner={slug} />
         <WealthMarketTabs owner={slug} />
-        <PortfolioView data={data} />
+        <Suspense fallback={<PortfolioContentFallback />}>
+          <WealthPortfolioContent portfolioId={owner.portfolioId} view={market} />
+        </Suspense>
       </main>
     </div>
   );

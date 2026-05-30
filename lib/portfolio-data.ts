@@ -1,7 +1,9 @@
-import { prisma } from "@/lib/prisma";
-import { fetchBulkNAVs } from "@/lib/apis/amfi";
-import { fetchStockPrice, fetchUSDINR } from "@/lib/apis/prices";
+import type { NavResult } from "@/lib/apis/amfi";
+import { getPortfolio } from "@/lib/data/portfolio";
+import { getCachedNAVs } from "@/lib/data/nav-server";
+import { getUSDINR } from "@/lib/data/fx-server";
 import { absoluteReturn } from "@/lib/utils/finance";
+import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
 
 export type MfRow = {
   id: string;
@@ -52,24 +54,26 @@ export type PortfolioPageData = {
   stockRows: StockRow[];
   filteredStockRows: StockRow[];
   filteredStockTotal: number;
+  usdInr: number;
 };
 
 export async function getPortfolioPageData(
   id: string,
   view?: string,
 ): Promise<PortfolioPageData | null> {
-  const portfolio = await prisma.portfolio.findUnique({
-    where: { id },
-    include: { mfHoldings: true, stockHoldings: true },
-  });
+  const needsNav = !view || view === "mf" || view === "all";
+
+  const [portfolio, usdInr] = await Promise.all([
+    getPortfolio(id),
+    getUSDINR(),
+  ]);
 
   if (!portfolio) return null;
 
   const codes = [...new Set(portfolio.mfHoldings.map((h) => h.schemeCode))];
-  const [navMap, usdInr] = await Promise.all([fetchBulkNAVs(codes), fetchUSDINR()]);
-
-  const priceResults = await Promise.all(
-    portfolio.stockHoldings.map((s) => fetchStockPrice(s.symbol, s.exchange)),
+  const navsObj = needsNav ? await getCachedNAVs(codes) : {};
+  const navMap = new Map(
+    Object.entries(navsObj) as [string, NavResult][],
   );
 
   const mfRows: MfRow[] = portfolio.mfHoldings.map((h) => {
@@ -81,7 +85,7 @@ export async function getPortfolioPageData(
     return {
       id: h.id,
       schemeCode: h.schemeCode,
-      schemeName: h.schemeName,
+      schemeName: formatMFSchemeName(navResult?.schemeName ?? h.schemeName),
       units: h.units,
       avgNAV: h.avgNAV,
       sipAmount: h.sipAmount,
@@ -95,17 +99,10 @@ export async function getPortfolioPageData(
     };
   });
 
-  const stockRows: StockRow[] = portfolio.stockHoldings.map((s, i) => {
-    const live = priceResults[i];
-    const cmp = live?.price ?? null;
+  // Cost basis on server — live prices overlay client-side via LiveStocksTable
+  const stockRows: StockRow[] = portfolio.stockHoldings.map((s) => {
     const fxRate = s.currency === "USD" ? usdInr : 1;
     const investedInr = s.qty * s.avgPrice * fxRate;
-    const value =
-      cmp !== null ? s.qty * cmp * fxRate : investedInr;
-    const gain =
-      cmp !== null && investedInr > 0
-        ? absoluteReturn(investedInr, value)
-        : null;
 
     return {
       id: s.id,
@@ -116,11 +113,11 @@ export async function getPortfolioPageData(
       qty: s.qty,
       avgPrice: s.avgPrice,
       action: s.action,
-      cmp,
-      changePct: live?.changePct ?? null,
+      cmp: null,
+      changePct: null,
       investedInr,
-      value,
-      gain,
+      value: investedInr,
+      gain: null,
     };
   });
 
@@ -189,5 +186,6 @@ export async function getPortfolioPageData(
     stockRows,
     filteredStockRows,
     filteredStockTotal,
+    usdInr,
   };
 }

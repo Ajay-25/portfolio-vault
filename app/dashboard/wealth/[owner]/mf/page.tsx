@@ -1,8 +1,9 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/layout/top-bar";
 import { WealthSubNav } from "@/components/dashboard/wealth-sub-nav";
-import { PortfolioView } from "@/components/dashboard/portfolio-view";
-import { getPortfolioPageData } from "@/lib/portfolio-data";
+import { WealthPortfolioContent } from "@/components/dashboard/wealth-portfolio-content";
+import { PortfolioContentFallback } from "@/components/dashboard/suspense-fallbacks";
 import {
   resolveOwner,
   wealthTopBarTitle,
@@ -20,9 +21,6 @@ export default async function WealthMfPage({
   const owner = resolveOwner(ownerSlug);
   if (!owner) notFound();
 
-  const data = await getPortfolioPageData(owner.portfolioId, "mf");
-  if (!data) notFound();
-
   const slug = owner.slug as WealthOwnerSlug;
 
   return (
@@ -30,7 +28,9 @@ export default async function WealthMfPage({
       <TopBar title={wealthTopBarTitle(slug, "mf")} />
       <main className="min-w-0 p-4 md:p-6">
         <WealthSubNav owner={slug} />
-        <PortfolioView data={data} />
+        <Suspense fallback={<PortfolioContentFallback />}>
+          <WealthPortfolioContent portfolioId={owner.portfolioId} view="mf" />
+        </Suspense>
       </main>
     </div>
   );

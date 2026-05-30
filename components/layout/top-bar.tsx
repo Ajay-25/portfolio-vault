@@ -97,10 +97,10 @@ export function TopBar({ title }: { title: string }) {
                 {nifty.price.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
               </span>
               <span
-                className="hidden font-mono text-[10px] sm:inline"
+                className="font-mono text-[10px] whitespace-nowrap"
                 style={{ color: isUp ? "var(--teal)" : "var(--red)" }}
               >
-                {isUp ? "▲" : "▼"} {Math.abs(pct).toFixed(2)}%
+                {isUp ? "+" : ""}{pct.toFixed(2)}%
               </span>
             </>
           ) : (

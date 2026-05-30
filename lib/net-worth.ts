@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import { fetchBulkNAVs } from "@/lib/apis/amfi";
-import { fetchUSDINR } from "@/lib/apis/prices";
+import type { NavResult } from "@/lib/apis/amfi";
+import { getAllPortfolios } from "@/lib/data/portfolio";
+import { getCachedNAVs } from "@/lib/data/nav-server";
+import { getUSDINR } from "@/lib/data/fx-server";
 import { aggregateFixedIncome } from "@/lib/fixed-income-data";
 import { getAllInvestmentLinkedInsurance } from "@/lib/insurance-data";
 import { WEALTH_OWNERS, wealthPath, type WealthOwnerSlug } from "@/lib/wealth-config";
@@ -235,10 +237,8 @@ function buildSlice(input: {
 
 export async function getNetWorthData(): Promise<NetWorthData> {
   const [portfolios, usdInr, fixedIncomeHoldings, insurancePolicies] = await Promise.all([
-    prisma.portfolio.findMany({
-      include: { mfHoldings: true, stockHoldings: true },
-    }),
-    fetchUSDINR(),
+    getAllPortfolios(),
+    getUSDINR(),
     prisma.fixedIncomeHolding.findMany(),
     getAllInvestmentLinkedInsurance(),
   ]);
@@ -291,7 +291,8 @@ export async function getNetWorthData(): Promise<NetWorthData> {
   const allCodes = [
     ...new Set(portfolios.flatMap((p) => p.mfHoldings.map((h) => h.schemeCode))),
   ];
-  const navMap = await fetchBulkNAVs(allCodes);
+  const navsObj = await getCachedNAVs(allCodes);
+  const navMap = new Map(Object.entries(navsObj) as [string, NavResult][]);
 
   const mfFor = (ids: string[]) =>
     portfolios

@@ -1,5 +1,5 @@
-import { prisma } from "@/lib/prisma";
 import { getPortfolioPageData } from "@/lib/portfolio-data";
+import { getFixedIncomeHoldings, getActionItemsByOwner } from "@/lib/data/portfolio";
 import { absoluteReturn } from "@/lib/utils/finance";
 import {
   resolveOwner,
@@ -51,15 +51,8 @@ export async function getWealthSummaryData(
 
   const [portfolioData, fixedIncomeHoldings, actionItems] = await Promise.all([
     getPortfolioPageData(owner.portfolioId),
-    prisma.fixedIncomeHolding.findMany({
-      where: { portfolioId: owner.portfolioId },
-      orderBy: { maturityDate: "asc" },
-    }),
-    prisma.actionItem.findMany({
-      where: { ownerId: owner.ownerId, completed: false },
-      orderBy: { priority: "asc" },
-      take: 5,
-    }),
+    getFixedIncomeHoldings(owner.portfolioId),
+    getActionItemsByOwner(owner.ownerId, 5),
   ]);
 
   if (!portfolioData) return null;

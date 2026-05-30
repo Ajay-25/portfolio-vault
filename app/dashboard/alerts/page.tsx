@@ -1,12 +1,11 @@
+import { Suspense } from "react";
 import { TopBar } from "@/components/layout/top-bar";
-import { StockAlertsView } from "@/components/dashboard/stock-alerts-view";
-import { getAlertsPageData } from "@/lib/alerts";
+import { StockAlertsContent } from "@/components/dashboard/stock-alerts-content";
+import { StockAlertsFallback } from "@/components/dashboard/suspense-fallbacks";
 
 export const revalidate = 300;
 
-export default async function AlertsPage() {
-  const data = await getAlertsPageData();
-
+export default function AlertsPage() {
   return (
     <div>
       <TopBar title="Planning · Stock Alerts" />
@@ -24,7 +23,9 @@ export default async function AlertsPage() {
           Stock <em style={{ color: "var(--gold)" }}>price alerts</em>
         </h1>
 
-        <StockAlertsView data={data} />
+        <Suspense fallback={<StockAlertsFallback />}>
+          <StockAlertsContent />
+        </Suspense>
       </main>
     </div>
   );

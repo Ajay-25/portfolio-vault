@@ -1,12 +1,11 @@
+import { Suspense } from "react";
 import { TopBar } from "@/components/layout/top-bar";
-import { GoalTrackerView } from "@/components/dashboard/goal-tracker-view";
-import { getGoalTrackerData } from "@/lib/goals";
+import { GoalTrackerContent } from "@/components/dashboard/goal-tracker-content";
+import { GoalTrackerFallback } from "@/components/dashboard/suspense-fallbacks";
 
 export const revalidate = 300;
 
-export default async function GoalPage() {
-  const data = await getGoalTrackerData();
-
+export default function GoalPage() {
   return (
     <div>
       <TopBar title="Overview · Goal Tracker" />
@@ -24,7 +23,9 @@ export default async function GoalPage() {
           Goal <em style={{ color: "var(--gold)" }}>progress tracker</em>
         </h1>
 
-        <GoalTrackerView data={data} />
+        <Suspense fallback={<GoalTrackerFallback />}>
+          <GoalTrackerContent />
+        </Suspense>
       </main>
     </div>
   );

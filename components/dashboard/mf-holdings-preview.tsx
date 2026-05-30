@@ -1,24 +1,24 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
-import { fetchBulkNAVs } from "@/lib/apis/amfi";
+import { getMFHoldings } from "@/lib/data/portfolio";
+import { getCachedNAVs } from "@/lib/data/nav-server";
+import type { NavResult } from "@/lib/apis/amfi";
 import { formatINR } from "@/lib/utils/finance";
+import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
 
 interface MFHoldingsPreviewProps {
   portfolioId: string;
 }
 
 export async function MFHoldingsPreview({ portfolioId }: MFHoldingsPreviewProps) {
-  const portfolio = await prisma.portfolio.findUnique({
-    where: { id: portfolioId },
-    include: { mfHoldings: true },
-  });
+  const mfHoldings = await getMFHoldings(portfolioId);
 
-  if (!portfolio || portfolio.mfHoldings.length === 0) {
+  if (mfHoldings.length === 0) {
     return null;
   }
 
-  const codes = [...new Set(portfolio.mfHoldings.map((h) => h.schemeCode))];
-  const navMap = await fetchBulkNAVs(codes);
+  const codes = [...new Set(mfHoldings.map((h) => h.schemeCode))];
+  const navsObj = await getCachedNAVs(codes);
+  const navMap = new Map(Object.entries(navsObj) as [string, NavResult][]);
 
   return (
     <div className="card animate-slide-up stagger-6 overflow-hidden">
@@ -53,7 +53,7 @@ export async function MFHoldingsPreview({ portfolioId }: MFHoldingsPreviewProps)
             </tr>
           </thead>
           <tbody>
-            {portfolio.mfHoldings.slice(0, 6).map((h) => {
+            {mfHoldings.slice(0, 6).map((h) => {
               const navResult = navMap.get(h.schemeCode);
               const nav = navResult?.nav;
               const navDate = navResult?.date;
@@ -62,7 +62,7 @@ export async function MFHoldingsPreview({ portfolioId }: MFHoldingsPreviewProps)
                 <tr key={h.id}>
                   <td>
                     <div className="text-sm font-medium" style={{ color: "var(--text)" }}>
-                      {h.schemeName}
+                      {formatMFSchemeName(navResult?.schemeName ?? h.schemeName)}
                     </div>
                     <div
                       className="font-mono text-[10px] mt-0.5"

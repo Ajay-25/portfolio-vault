@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { getFixedIncomeHoldings } from "@/lib/data/portfolio";
 import { resolveOwner, type WealthOwnerSlug } from "@/lib/wealth-config";
 
 export const FIXED_INCOME_TYPES = [
@@ -71,10 +71,7 @@ export async function getFixedIncomePageData(
   const owner = resolveOwner(ownerSlug);
   if (!owner) return null;
 
-  const holdings = await prisma.fixedIncomeHolding.findMany({
-    where: { portfolioId: owner.portfolioId },
-    orderBy: [{ maturityDate: "asc" }, { label: "asc" }],
-  });
+  const holdings = await getFixedIncomeHoldings(owner.portfolioId);
 
   const rows = holdings.map(toRow);
   const totalPrincipal = rows.reduce((sum, r) => sum + r.principal, 0);
