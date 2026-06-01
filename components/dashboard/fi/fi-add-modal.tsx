@@ -58,7 +58,12 @@ export function FIAddModal({
       notes:       form.notes.trim() || null,
     };
 
-    if (type === "ppf") body.annualContrib = form.annualContrib ? Number(form.annualContrib) : Number(form.principal);
+    if (type === "ppf") {
+      body.annualContrib = form.annualContrib ? Number(form.annualContrib) : Number(form.principal);
+      body.ppfWithdrawalAvailable = form.ppfWithdrawalAvailable
+        ? Number(form.ppfWithdrawalAvailable)
+        : null;
+    }
     if (type === "epf") {
       body.uan = form.uan || null;
       body.employeeMonthly = form.employeeMonthly ? Number(form.employeeMonthly) : null;
@@ -132,7 +137,10 @@ export function FIAddModal({
           </div>
 
           {type === "ppf" && (
-            <Field label="Annual contribution (₹)" value={form.annualContrib ?? ""} onChange={(v) => set("annualContrib", v)} type="number" />
+            <>
+              <Field label="Annual contribution (₹)" value={form.annualContrib ?? ""} onChange={(v) => set("annualContrib", v)} type="number" />
+              <Field label="Withdrawal available (₹)" value={form.ppfWithdrawalAvailable ?? ""} onChange={(v) => set("ppfWithdrawalAvailable", v)} type="number" />
+            </>
           )}
           {type === "epf" && (
             <>

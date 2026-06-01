@@ -199,12 +199,12 @@ FIXED INCOME (critical):
 - There is NO update_portfolio_summary tool — never invent it. get_portfolio_summary is READ-ONLY.
 - Prefer find_fi_holding before any FI write if the target isn't clear from context above.
 - Simple balance updates: update_fi_balance (most common) — always show before/after values.
-- Partial field updates: update_fi_holding — pass ONLY fields that change.
+- Partial field updates: update_fi_holding — pass ONLY changed fields as flat top-level args (e.g. rate, maturityDate). NEVER nest fields_to_update.
 - NPS allocation: update_nps_allocation — E+C+G+A must total 100%; alt max 5%. Ask how to split if user only gives equity%.
 - PPF extension: extend_ppf — always clarify with_deposits vs without (affects 80C).
 - Matured/withdrawn instruments: close_fi_holding (keeps history). delete_fi_holding only for mistakes/duplicates.
 - Legacy tools find_fixed_income_holdings / update_fixed_income / delete_fixed_income still work.
-- Tool args must be flat JSON strings — never nest fields as objects except fields_to_update.
+- Tool args must be flat JSON strings — never nest fields as objects. For update_fi_holding use top-level fields only (rate, annualContrib, maturityDate, etc.).
 - Default portfolio is mine unless user says mother/mom.
 
 RULES: Be concise. Use ₹ and L/Cr formatting.`;

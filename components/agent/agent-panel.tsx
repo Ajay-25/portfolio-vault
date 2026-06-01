@@ -198,6 +198,9 @@ export function AgentPanel() {
   const messagesEndRef                  = useRef<HTMLDivElement>(null);
   const textareaRef                     = useRef<HTMLTextAreaElement>(null);
   const fileInputRef                    = useRef<HTMLInputElement>(null);
+  const abortControllerRef              = useRef<AbortController | null>(null);
+  const streamReaderRef                 = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const userStoppedRef                  = useRef(false);
 
   const adjustTextareaHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -363,6 +366,12 @@ export function AgentPanel() {
     setPendingFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
+  const stopAgent = useCallback(() => {
+    userStoppedRef.current = true;
+    abortControllerRef.current?.abort();
+    void streamReaderRef.current?.cancel();
+  }, []);
+
   const send = async (text: string) => {
     const trimmed = text.trim();
     if ((!trimmed && pendingFiles.length === 0) || loading) return;
@@ -394,6 +403,8 @@ export function AgentPanel() {
     requestAnimationFrame(adjustTextareaHeight);
 
     const controller = new AbortController();
+    abortControllerRef.current = controller;
+    userStoppedRef.current = false;
     let timedOut = false;
     let timeoutId = setTimeout(() => {
       timedOut = true;
@@ -440,6 +451,7 @@ export function AgentPanel() {
       if (!res.body) throw new Error("No response stream from agent");
 
       const reader = res.body.getReader();
+      streamReaderRef.current = reader;
       const decoder = new TextDecoder();
       let buffer = "";
 
@@ -491,7 +503,7 @@ export function AgentPanel() {
                         content:
                           event.reply?.trim() ||
                           m.content ||
-                          "Done.",
+                          (event.cancelled ? "(Stopped)" : "Done."),
                         toolCalls: event.toolCalls.length ? event.toolCalls : undefined,
                         streaming: false,
                         status:    undefined,
@@ -518,20 +530,54 @@ export function AgentPanel() {
       }
 
       if (!gotDone) {
+        if (userStoppedRef.current) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === streamId
+                ? {
+                    ...m,
+                    content: m.content.trim() || "(Stopped)",
+                    streaming: false,
+                    status:    undefined,
+                  }
+                : m,
+            ),
+          );
+          loadChats();
+        } else {
+          patchStream({
+            content:   "Response ended unexpectedly. Reopen this chat from history to see if Vault replied.",
+            streaming: false,
+            status:    undefined,
+          });
+        }
+      }
+    } catch (err) {
+      if (userStoppedRef.current) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === streamId
+              ? {
+                  ...m,
+                  content: m.content.trim() || "(Stopped)",
+                  streaming: false,
+                  status:    undefined,
+                }
+              : m,
+          ),
+        );
+        loadChats();
+      } else {
         patchStream({
-          content:   "Response ended unexpectedly. Reopen this chat from history to see if Vault replied.",
+          content:   describeAgentError(err, timedOut),
           streaming: false,
           status:    undefined,
         });
       }
-    } catch (err) {
-      patchStream({
-        content:   describeAgentError(err, timedOut),
-        streaming: false,
-        status:    undefined,
-      });
     } finally {
       clearTimeout(timeoutId);
+      abortControllerRef.current = null;
+      streamReaderRef.current = null;
       setLoading(false);
     }
   };
@@ -951,29 +997,39 @@ export function AgentPanel() {
                 />
                 <button
                   type="button"
-                  onClick={() => send(input)}
-                  disabled={loading || (!input.trim() && pendingFiles.length === 0)}
+                  onClick={loading ? stopAgent : () => send(input)}
+                  disabled={!loading && !input.trim() && pendingFiles.length === 0}
                   className="mb-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all"
                   style={{
-                    background:
-                      input.trim() || pendingFiles.length > 0 ? "var(--gold)" : "var(--bg-3)",
-                    opacity: loading ? 0.5 : 1,
+                    background: loading
+                      ? "rgba(220,80,80,0.15)"
+                      : input.trim() || pendingFiles.length > 0
+                        ? "var(--gold)"
+                        : "var(--bg-3)",
+                    border: loading ? "1px solid rgba(220,80,80,0.4)" : undefined,
                   }}
-                  aria-label="Send message"
+                  aria-label={loading ? "Stop agent" : "Send message"}
+                  title={loading ? "Stop" : "Send"}
                 >
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-                    <path
-                      d="M2 6h8M7 3l3 3-3 3"
-                      stroke={
-                        input.trim() || pendingFiles.length > 0
-                          ? "#111"
-                          : "var(--text-muted)"
-                      }
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  {loading ? (
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
+                      <rect x="1" y="1" width="8" height="8" rx="1" fill="rgba(220,80,80,0.9)" />
+                    </svg>
+                  ) : (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                      <path
+                        d="M2 6h8M7 3l3 3-3 3"
+                        stroke={
+                          input.trim() || pendingFiles.length > 0
+                            ? "#111"
+                            : "var(--text-muted)"
+                        }
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
                 </button>
               </div>
               <div className="mt-2 flex flex-col items-center gap-0.5">

@@ -47,6 +47,11 @@ export function relaxSchemaForGroq(
     out.properties = props;
   }
 
+  // Preserve permissive schemas for Groq (nested patch objects, extra flat fields).
+  if (schema.additionalProperties === true) {
+    out.additionalProperties = true;
+  }
+
   return out;
 }
 

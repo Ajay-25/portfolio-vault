@@ -105,11 +105,13 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const gen = runAgentStream(apiKey, modelId, history, expandedMessage);
+        const gen = runAgentStream(apiKey, modelId, history, expandedMessage, {
+          signal: req.signal,
+        });
         let result = await gen.next();
 
         while (!result.done) {
-          push(result.value);
+          if (!req.signal.aborted) push(result.value);
           result = await gen.next();
         }
 
@@ -138,16 +140,23 @@ export async function POST(req: NextRequest) {
           revalidateTag("agent-context");
         }
 
-        push({
-          type:      "done",
-          chatId:    chatIdForStream,
-          reply:     agentResult.reply,
-          toolCalls: agentResult.toolCalls,
-          refreshed: agentResult.refreshed,
-          model:     modelId,
-        });
+        if (!req.signal.aborted) {
+          push({
+            type:      "done",
+            chatId:    chatIdForStream,
+            reply:     agentResult.reply,
+            toolCalls: agentResult.toolCalls,
+            refreshed: agentResult.refreshed,
+            model:     modelId,
+            cancelled: agentResult.cancelled,
+          });
+        }
         controller.close();
       } catch (err) {
+        if (req.signal.aborted) {
+          controller.close();
+          return;
+        }
         const msg = err instanceof Error ? err.message : "Unknown error";
         console.error("Agent error:", err);
         push({ type: "error", message: msg });

@@ -164,7 +164,8 @@ model FixedIncomeHolding {
   altPct           Float?
 
   // ── PPF-specific ─────────────────────────────────────────────────────────
-  extensionCount   Int @default(0)
+  extensionCount          Int @default(0)
+  ppfWithdrawalAvailable  Float? // partial withdrawal limit (₹), from passbook / bank
 
   // ── Bond-specific ────────────────────────────────────────────────────────
   isin             String?

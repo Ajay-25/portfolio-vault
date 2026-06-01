@@ -16,6 +16,25 @@ function looksNumericString(value: string): boolean {
   return /^-?\d+(\.\d+)?$/.test(value.trim());
 }
 
+/** Groq often emits nested objects as JSON strings (e.g. fields_to_update). */
+function parseJsonObjectString(value: unknown): Record<string, unknown> | undefined {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed != null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 /** Groq/Llama often wrap scalars as {value:…}, {type, value}, or {fieldName:…}. */
 export function flattenModelValue(value: unknown): unknown {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
@@ -81,6 +100,12 @@ export function parseOptionalNumber(value: unknown): number | undefined {
 function coerceValue(key: string, value: unknown): unknown {
   value = flattenModelValue(value);
   if (isBlank(value)) return undefined;
+
+  if (/^fields_to_update$/i.test(key)) {
+    const obj = parseJsonObjectString(value);
+    if (obj) return coerceRecord(obj);
+    return undefined;
+  }
 
   if (/^confirmed$/i.test(key)) {
     const b = coerceBoolean(value);
@@ -150,6 +175,37 @@ function unwrapToolInputRoot(input: Record<string, unknown>): Record<string, unk
     return args as Record<string, unknown>;
   }
   return input;
+}
+
+/** Flatten fields_to_update (object or JSON string) into top-level args for Groq compatibility. */
+export function flattenFiUpdateArgs(args: Record<string, unknown>): Record<string, unknown> {
+  if (args.fields_to_update === undefined) return args;
+
+  const out = { ...args };
+  const raw = args.fields_to_update;
+  delete out.fields_to_update;
+
+  let patch: Record<string, unknown> | undefined;
+  if (typeof raw === "string" && raw.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        patch = parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* ignore */
+    }
+  } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    patch = raw as Record<string, unknown>;
+  }
+
+  if (patch) {
+    for (const [key, val] of Object.entries(patch)) {
+      if (out[key] === undefined) out[key] = val;
+    }
+  }
+
+  return out;
 }
 
 /** Parse stringified numbers from LLM tool calls; drop empty strings; flatten nested scalars. */

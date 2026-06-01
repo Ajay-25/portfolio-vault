@@ -1,5 +1,5 @@
 import { AGENT_TOOLS } from "@/lib/agent/tools";
-import { coerceToolInput } from "@/lib/agent/coerce-tool-input";
+import { coerceToolInput, flattenFiUpdateArgs } from "@/lib/agent/coerce-tool-input";
 import { AGENT_SYNTHESIS_PROMPT } from "@/lib/agent/synthesis-fallback";
 
 const KNOWN_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
@@ -76,13 +76,21 @@ export function prepareToolCalls(
       if (hasStockFindWithQuery && !hasStockSearchArgs(p.args)) return false;
       return true;
     })
-    .map(({ call, args }) => ({
-      ...call,
-      function: {
-        ...call.function,
-        arguments: JSON.stringify(args),
-      },
-    }));
+    .map(({ call, name, args }) => {
+      const normalized =
+        name === "update_fi_holding" ? flattenFiUpdateArgs(coerceRecord(args)) : args;
+      return {
+        ...call,
+        function: {
+          ...call.function,
+          arguments: JSON.stringify(normalized),
+        },
+      };
+    });
+}
+
+function coerceRecord(args: Record<string, unknown>): Record<string, unknown> {
+  return coerceToolInput(args);
 }
 
 export function buildFailedGenerationNudge(
@@ -144,9 +152,16 @@ export function isGroqToolValidationError(err: unknown): boolean {
 }
 
 export function buildToolValidationNudge(toolName?: string): string {
+  if (toolName === "update_fi_holding") {
+    return [
+      "Use FLAT JSON only — each field at top level. Do NOT nest fields_to_update.",
+      'Example: {"keyword":"ppf","portfolio":"mine","rate":"7.1"}',
+      'Example: {"id":"fi-abc","maturityDate":"2027-12-01","annualContrib":"150000"}',
+    ].join(" ");
+  }
   if (toolName === "delete_fixed_income" || toolName === "delete_fi_holding" || toolName?.includes("fixed_income") || toolName?.includes("fi_holding")) {
     return [
-      "Use ONE tool call with flat JSON string fields — no nested objects except fields_to_update.",
+      "Use ONE tool call with flat JSON string fields — no nested objects.",
       'Balance update: {"keyword":"ppf","new_value":"850000","portfolio":"mine"}',
       'Delete mistake: find_fi_holding first, then delete_fi_holding with id + confirmed:"true"',
     ].join(" ");

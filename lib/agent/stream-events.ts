@@ -15,6 +15,7 @@ export type AgentStreamEvent =
       toolCalls: AgentToolCall[];
       refreshed: boolean;
       model:     string;
+      cancelled?: boolean;
     }
   | { type: "error"; message: string };
 

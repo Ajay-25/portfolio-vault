@@ -289,6 +289,7 @@ export async function createFiHolding(input: Record<string, unknown>): Promise<s
       govtSecPct: type.startsWith("nps") ? g : parseOptionalNumber(input.govtSecPct) ?? null,
       altPct: type.startsWith("nps") ? a : parseOptionalNumber(input.altPct) ?? null,
       extensionCount: parseOptionalNumber(input.extensionCount) ?? 0,
+      ppfWithdrawalAvailable: parseOptionalNumber(input.ppfWithdrawalAvailable) ?? null,
       isin: (input.isin as string)?.trim() || null,
       couponFrequency:
         (input.couponFrequency as string) || (defaults.couponFrequency as string) || null,
@@ -358,16 +359,30 @@ const UPDATABLE_FIELDS = new Set([
   "startDate", "maturityDate", "annualContrib", "monthlyContrib", "maturityAmount",
   "compoundingFreq", "interestPayout", "autoRenewal", "isTaxSaving", "uan", "employerName",
   "employeeMonthly", "employerMonthly", "epsBalance", "pran", "fundManager", "investmentChoice",
-  "equityPct", "corpBondPct", "govtSecPct", "altPct", "extensionCount", "isin",
+  "equityPct", "corpBondPct", "govtSecPct", "altPct", "extensionCount", "ppfWithdrawalAvailable", "isin",
   "couponFrequency", "rating", "nextCouponDate", "taxBenefit", "notes",
 ]);
 
 const DATE_FIELDS = new Set(["startDate", "maturityDate", "nextCouponDate", "valueAsOf"]);
 
 export async function updateFiHolding(input: Record<string, unknown>): Promise<string> {
-  let fields = input.fields_to_update as Record<string, unknown> | undefined;
+  let fields: Record<string, unknown> | undefined;
 
-  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+  const rawFields = input.fields_to_update;
+  if (typeof rawFields === "string" && rawFields.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(rawFields) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        fields = parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* fall through */
+    }
+  } else if (rawFields && typeof rawFields === "object" && !Array.isArray(rawFields)) {
+    fields = rawFields as Record<string, unknown>;
+  }
+
+  if (!fields || !Object.keys(fields).length) {
     fields = {};
     for (const [key, val] of Object.entries(input)) {
       if (["id", "keyword", "portfolio", "fields_to_update"].includes(key)) continue;
@@ -376,7 +391,7 @@ export async function updateFiHolding(input: Record<string, unknown>): Promise<s
   }
 
   if (!Object.keys(fields).length) {
-    return "No fields provided to update. Pass fields_to_update or individual fields.";
+    return "No fields provided to update. Pass flat top-level fields (e.g. rate, maturityDate) or fields_to_update object.";
   }
 
   const portfolio = normalizePortfolioKey(input.portfolio);

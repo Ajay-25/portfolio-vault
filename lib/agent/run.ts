@@ -25,6 +25,7 @@ export type AgentRunResult = {
   reply:      string;
   toolCalls:  AgentToolCall[];
   refreshed:  boolean;
+  cancelled?: boolean;
 };
 
 type HistoryMessage = {
@@ -207,8 +208,50 @@ function formatGroqError(err: unknown): string {
   return msg;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+type AgentRunOptions = {
+  signal?: AbortSignal;
+};
+
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error && err.name === "AbortError") return true;
+  return false;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+}
+
+function cancelledResult(
+  reply: string,
+  toolCalls: AgentToolCall[],
+  refreshed: boolean,
+): AgentRunResult {
+  const text = reply.trim();
+  return {
+    reply:     text || "(Stopped)",
+    toolCalls,
+    refreshed,
+    cancelled: true,
+  };
+}
+
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (!signal) return;
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      },
+      { once: true },
+    );
+  });
 }
 
 type GroqStream = AsyncIterable<Groq.Chat.Completions.ChatCompletionChunk>;
@@ -218,21 +261,28 @@ async function createGroqStream(
   modelId: string,
   messages: Groq.Chat.ChatCompletionMessageParam[],
   textOnly: boolean,
+  signal?: AbortSignal,
 ): Promise<GroqStream> {
   if (textOnly) {
-    return groq.chat.completions.create({
-      model:    resolveModel(modelId),
-      messages,
-      stream:   true,
-    }) as Promise<GroqStream>;
+    return groq.chat.completions.create(
+      {
+        model:    resolveModel(modelId),
+        messages,
+        stream:   true,
+      },
+      { signal },
+    ) as Promise<GroqStream>;
   }
-  return groq.chat.completions.create({
-    model:       resolveModel(modelId),
-    messages,
-    tools:       toGroqTools(),
-    tool_choice: "auto",
-    stream:      true,
-  }) as Promise<GroqStream>;
+  return groq.chat.completions.create(
+    {
+      model:       resolveModel(modelId),
+      messages,
+      tools:       toGroqTools(),
+      tool_choice: "auto",
+      stream:      true,
+    },
+    { signal },
+  ) as Promise<GroqStream>;
 }
 
 function tryFallbackReply(
@@ -247,7 +297,9 @@ export async function* runAgentStream(
   modelId: string,
   history: HistoryMessage[],
   userMessage: string,
+  options: AgentRunOptions = {},
 ): AsyncGenerator<AgentStreamEvent, AgentRunResult> {
+  const { signal } = options;
   const groq = new Groq({ apiKey });
   const systemPrompt = await buildAgentContext();
 
@@ -267,17 +319,22 @@ export async function* runAgentStream(
   let forceTextOnly = false;
   const toolCalls: AgentToolCall[] = [];
   let reply = "";
+  let accumulatedReply = "";
 
+  try {
   while (rounds < MAX_AGENT_ROUNDS) {
+    throwIfAborted(signal);
     rounds++;
     yield { type: "status", message: rounds === 1 ? "Thinking…" : forceTextOnly ? "Summarizing…" : "Continuing…" };
 
     let stream: GroqStream | null = null;
     for (let attempt = 0; attempt <= GROQ_RATE_LIMIT_RETRIES; attempt++) {
+      throwIfAborted(signal);
       try {
-        stream = await createGroqStream(groq, modelId, messages, forceTextOnly);
+        stream = await createGroqStream(groq, modelId, messages, forceTextOnly, signal);
         break;
       } catch (err) {
+        if (isAbortError(err)) throw err;
         if (
           (isGroqFailedGeneration(err) || isGroqToolValidationError(err)) &&
           failedGenerationRetries < GROQ_FAILED_GENERATION_RETRIES
@@ -314,7 +371,7 @@ export async function* runAgentStream(
           type:    "status",
           message: `Groq rate limit — waiting ${Math.ceil(waitMs / 1000)}s…`,
         };
-        await sleep(waitMs);
+        await sleep(waitMs, signal);
       }
     }
 
@@ -329,13 +386,16 @@ export async function* runAgentStream(
     let finishReason: string | null = null;
     const toolCallsAccum = new Map<number, AccumulatedToolCall>();
 
+    try {
     for await (const chunk of stream) {
+      throwIfAborted(signal);
       finishReason = chunk.choices[0]?.finish_reason ?? finishReason;
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
 
       if (delta.content) {
         roundText += delta.content;
+        accumulatedReply += delta.content;
         yield { type: "text_delta", text: delta.content };
       }
 
@@ -353,6 +413,10 @@ export async function* runAgentStream(
           toolCallsAccum.set(idx, existing);
         }
       }
+    }
+    } catch (err) {
+      if (isAbortError(err)) return cancelledResult(accumulatedReply, toolCalls, wroteData);
+      throw err;
     }
 
     const messageToolCalls = [...toolCallsAccum.entries()]
@@ -424,6 +488,7 @@ export async function* runAgentStream(
     });
 
     for (const call of sanitizedToolCalls) {
+      throwIfAborted(signal);
       const name = call.function.name;
       yield { type: "status", message: toolStatus(name) };
       yield { type: "tool_start", name };
@@ -460,6 +525,10 @@ export async function* runAgentStream(
 
   reply = "I couldn't complete that request in time. Some actions may have partially applied — check your portfolio or try again.";
   return { reply, toolCalls, refreshed: wroteData };
+  } catch (err) {
+    if (isAbortError(err)) return cancelledResult(accumulatedReply, toolCalls, wroteData);
+    throw err;
+  }
 }
 
 /** Non-streaming fallback (tests / scripts). */

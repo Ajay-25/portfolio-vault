@@ -241,6 +241,7 @@ async function main() {
       annualContrib: 150000,
       taxBenefit:    "EEE",
       extensionCount: 0,
+      ppfWithdrawalAvailable: 420000,
       notes:         "Invest before 5th of month for max interest",
     },
     {

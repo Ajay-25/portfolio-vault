@@ -3,7 +3,7 @@
 import type { FIHolding } from "@/lib/fixed-income-data";
 import { fiValue, ppfProjectedMaturity } from "@/lib/fixed-income-data";
 import { formatINR } from "@/lib/utils/finance";
-import { formatFIDate, ppfProgress } from "@/lib/fi-utils";
+import { formatFIDate, maskAccount, ppfProgress } from "@/lib/fi-utils";
 import { DetailGrid, HeroValue, ProgressBar, ProjectedValue } from "./shared";
 
 export function PPFCard({ holding }: { holding: FIHolding }) {
@@ -16,8 +16,17 @@ export function PPFCard({ holding }: { holding: FIHolding }) {
     yearsRemaining,
     (holding.rate ?? 7.1) / 100,
   );
-  const canPartial = yearsCompleted >= 7;
-  const canLoan = yearsCompleted >= 3 && yearsCompleted <= 6;
+  const withdrawalAvailable = holding.ppfWithdrawalAvailable;
+  const partialEligible = yearsCompleted >= 7;
+  const hasWithdrawalAmount = withdrawalAvailable != null && withdrawalAvailable > 0;
+
+  const withdrawalDetail = hasWithdrawalAmount
+    ? formatINR(withdrawalAvailable, true)
+    : partialEligible
+      ? "Eligible — amount not set"
+      : yearsCompleted < 3
+        ? "After year 7"
+        : `Partial after year 7 (yr ${yearsCompleted}/7)`;
 
   return (
     <div className="card p-5">
@@ -30,11 +39,17 @@ export function PPFCard({ holding }: { holding: FIHolding }) {
           <div className="text-sm font-medium" style={{ color: "var(--text)" }}>
             {holding.label}
           </div>
-          <div className="font-mono text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            {holding.institution ?? "—"}
-          </div>
+          {holding.accountNumber && (
+            <div className="font-mono text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+              A/c {maskAccount(holding.accountNumber)}
+            </div>
+          )}
         </div>
-        <HeroValue label="Current balance" value={formatINR(balance, true)} sub={holding.valueAsOf ? `as of ${formatFIDate(holding.valueAsOf)}` : undefined} />
+        <HeroValue
+          label="Current balance"
+          value={formatINR(balance, true)}
+          sub={holding.valueAsOf ? `as of ${formatFIDate(holding.valueAsOf)}` : undefined}
+        />
       </div>
 
       <ProgressBar
@@ -46,22 +61,43 @@ export function PPFCard({ holding }: { holding: FIHolding }) {
 
       <DetailGrid
         items={[
-          { label: "Rate", value: `${holding.rate ?? "—"}% p.a.` },
+          { label: "Bank", value: holding.institution ?? "—" },
+          { label: "Opening date", value: formatFIDate(holding.startDate) },
+          { label: "Maturity date", value: formatFIDate(holding.maturityDate) },
+          { label: "ROI", value: holding.rate != null ? `${holding.rate}% p.a.` : "—" },
           { label: "Annual deposit", value: formatINR(holding.annualContrib ?? 0, true) },
-          { label: "Started", value: formatFIDate(holding.startDate) },
+          { label: "Withdrawal available", value: withdrawalDetail },
           { label: "Extensions", value: String(holding.extensionCount ?? 0) },
         ]}
       />
 
       <ProjectedValue amount={projected} />
 
-      <div className="flex flex-wrap gap-2 mt-4">
-        {canPartial && <span className="badge badge-teal">Partial withdrawal eligible</span>}
-        {canLoan && <span className="badge badge-gold">Loan eligible (yr 3–6)</span>}
-        {!canPartial && !canLoan && yearsCompleted < 3 && (
-          <span className="badge badge-muted">Locked — partial after yr 7</span>
-        )}
-      </div>
+      {(hasWithdrawalAmount || (partialEligible && !hasWithdrawalAmount)) && (
+        <div
+          className="mt-4 pt-3 flex flex-wrap items-center gap-x-3 gap-y-2"
+          style={{ borderTop: "1px solid var(--border)" }}
+        >
+          {hasWithdrawalAmount && (
+            <>
+              <span className="badge badge-teal">Partial withdrawal available</span>
+              <span className="font-mono text-sm font-medium" style={{ color: "var(--teal)" }}>
+                {formatINR(withdrawalAvailable, true)}
+              </span>
+            </>
+          )}
+          {partialEligible && !hasWithdrawalAmount && (
+            <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
+              Partial withdrawal eligible — add withdrawal limit from your passbook
+            </span>
+          )}
+        </div>
+      )}
+      {!partialEligible && yearsCompleted < 3 && (
+        <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+          <span className="badge badge-muted">Locked — partial withdrawal after year 7</span>
+        </div>
+      )}
     </div>
   );
 }
