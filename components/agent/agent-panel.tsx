@@ -8,6 +8,7 @@ import {
   getModelGuide,
   isKnownModel,
   resolveModel,
+  modelSupportsVaultTools,
   type AgentModelOption,
   type TokenUsageTier,
 } from "@/lib/agent/models";
@@ -222,6 +223,10 @@ export function AgentPanel() {
             localStorage.setItem(MODEL_STORAGE_KEY, DEFAULT_AGENT_MODEL);
             return DEFAULT_AGENT_MODEL;
           }
+          if (!modelSupportsVaultTools(resolved)) {
+            localStorage.setItem(MODEL_STORAGE_KEY, DEFAULT_AGENT_MODEL);
+            return DEFAULT_AGENT_MODEL;
+          }
           if (resolved !== current) {
             localStorage.setItem(MODEL_STORAGE_KEY, resolved);
           }
@@ -297,6 +302,11 @@ export function AgentPanel() {
     const saved = localStorage.getItem(MODEL_STORAGE_KEY);
     if (saved) {
       const resolved = resolveModel(saved);
+      if (!modelSupportsVaultTools(resolved)) {
+        localStorage.setItem(MODEL_STORAGE_KEY, DEFAULT_AGENT_MODEL);
+        setModel(DEFAULT_AGENT_MODEL);
+        return;
+      }
       setModel(resolved);
       if (resolved !== saved) {
         localStorage.setItem(MODEL_STORAGE_KEY, resolved);
@@ -715,7 +725,7 @@ export function AgentPanel() {
 
                 {modelOpen && (
                   <div
-                    className="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-lg py-1"
+                    className="absolute left-0 right-0 top-full z-10 mt-1 max-h-96 overflow-y-auto rounded-lg py-1"
                     style={{
                       background: "var(--bg-2)",
                       border:     "1px solid var(--border-gold)",

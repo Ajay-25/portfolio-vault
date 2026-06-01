@@ -11,7 +11,7 @@ import {
 } from "@/lib/agent/tool-call-prep";
 import { executeTool } from "@/lib/agent/executor";
 import { buildAgentContext } from "@/lib/agent/context";
-import { resolveModel } from "@/lib/agent/models";
+import { resolveModel, modelSupportsVaultTools } from "@/lib/agent/models";
 import {
   AGENT_SYNTHESIS_PROMPT,
   fallbackReplyFromToolResults,
@@ -205,6 +205,9 @@ function formatGroqError(err: unknown): string {
   if (isGroqToolValidationError(err)) {
     return "Groq rejected malformed tool arguments. Retry with flat JSON fields (strings, not nested objects).";
   }
+  if (msg.includes("tool calling") && msg.toLowerCase().includes("not supported")) {
+    return "This model does not support Vault portfolio tools. Choose Llama 3.3 70B Versatile or Llama 3.1 8B Instant in the model picker.";
+  }
   return msg;
 }
 
@@ -300,6 +303,16 @@ export async function* runAgentStream(
   options: AgentRunOptions = {},
 ): AsyncGenerator<AgentStreamEvent, AgentRunResult> {
   const { signal } = options;
+  const resolvedModel = resolveModel(modelId);
+
+  if (!modelSupportsVaultTools(resolvedModel)) {
+    const msg =
+      "Groq Compound models use Groq's built-in tools only and cannot run Vault portfolio updates. Switch to Llama 3.3 70B Versatile or Llama 3.1 8B Instant.";
+    yield { type: "status", message: "Unsupported model" };
+    yield { type: "text_delta", text: msg };
+    return { reply: msg, toolCalls: [], refreshed: false };
+  }
+
   const groq = new Groq({ apiKey });
   const systemPrompt = await buildAgentContext();
 
