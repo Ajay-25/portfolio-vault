@@ -319,7 +319,9 @@ export async function getNetWorthData(): Promise<NetWorthData> {
 
   const fiFor = (ids: string[]) =>
     aggregateFixedIncome(
-      fixedIncomeHoldings.filter((h) => ids.includes(h.portfolioId)),
+      fixedIncomeHoldings
+        .filter((h) => ids.includes(h.portfolioId))
+        .map((h) => ({ type: h.type, principal: h.principal, currentValue: h.currentValue })),
     );
 
   const primaryIndianStocks =

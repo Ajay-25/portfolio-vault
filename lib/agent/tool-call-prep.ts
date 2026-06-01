@@ -14,10 +14,12 @@ export function resolveToolName(raw: string): string | null {
     update_stock:              "update_stock_holding",
     delete_stocks:             "delete_stock",
     add_stock:                 "add_or_update_stock",
-    find_fixed_income:         "find_fixed_income_holdings",
-    delete_fixed_income_holding: "delete_fixed_income",
-    // Model often hallucinates this when removing duplicate fixed income — no such tool exists
-    update_portfolio_summary:  "delete_fixed_income",
+    find_fixed_income:         "find_fi_holding",
+    delete_fixed_income_holding: "delete_fi_holding",
+    update_portfolio_summary:  "close_fi_holding",
+    list_fixed_income:         "list_fi_holdings",
+    update_fi:                 "update_fi_holding",
+    update_fixed_income_balance: "update_fi_balance",
   };
   if (aliases[name]) return aliases[name];
 
@@ -128,10 +130,11 @@ export function isGroqToolValidationError(err: unknown): boolean {
 }
 
 export function buildToolValidationNudge(toolName?: string): string {
-  if (toolName === "delete_fixed_income" || toolName?.includes("fixed_income")) {
+  if (toolName === "delete_fixed_income" || toolName === "delete_fi_holding" || toolName?.includes("fixed_income") || toolName?.includes("fi_holding")) {
     return [
-      "Use ONE tool call with flat JSON string fields — no nested objects.",
-      'Example: {"type":"liquid","label":"Liquid / Arbitrage","portfolio":"mine","confirmed":"true"}',
+      "Use ONE tool call with flat JSON string fields — no nested objects except fields_to_update.",
+      'Balance update: {"keyword":"ppf","new_value":"850000","portfolio":"mine"}',
+      'Delete mistake: find_fi_holding first, then delete_fi_holding with id + confirmed:"true"',
     ].join(" ");
   }
   return "Use flat JSON tool arguments — each field must be a plain string or number, not a nested object.";

@@ -115,18 +115,71 @@ model StockHolding {
 }
 
 model FixedIncomeHolding {
-  id           String    @id @default(uuid())
-  portfolioId  String
-  type         String    // ppf | epf | nps | fd | bond | liquid | sweep_fd
-  label        String
-  issuer       String?
-  principal    Float
-  rate         Float?
-  startDate    DateTime?
-  maturityDate DateTime?
-  taxBenefit   String?
-  notes        String?
-  portfolio    Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  id            String    @id @default(uuid())
+  portfolioId   String
+
+  // ── Classification ──────────────────────────────────────────────────────
+  type          String
+  // ppf | epf | nps_tier1 | nps_tier2 | fd | rd | bond | nsc | scss | liquid | sweep_fd
+
+  label         String
+  institution   String?
+  accountNumber String?
+
+  // ── Core financials ──────────────────────────────────────────────────────
+  principal     Float
+  currentValue  Float?
+  valueAsOf     DateTime?
+  rate          Float?
+
+  // ── Dates ────────────────────────────────────────────────────────────────
+  startDate     DateTime?
+  maturityDate  DateTime?
+
+  // ── Contributions ────────────────────────────────────────────────────────
+  annualContrib  Float?
+  monthlyContrib Float?
+
+  // ── FD-specific ──────────────────────────────────────────────────────────
+  maturityAmount  Float?
+  compoundingFreq String?
+  interestPayout  String?
+  autoRenewal     Boolean @default(false)
+  isTaxSaving     Boolean @default(false)
+
+  // ── EPF-specific ─────────────────────────────────────────────────────────
+  uan              String?
+  employerName     String?
+  employeeMonthly  Float?
+  employerMonthly  Float?
+  epsBalance       Float?
+
+  // ── NPS-specific ─────────────────────────────────────────────────────────
+  pran             String?
+  fundManager      String?
+  investmentChoice String?
+  equityPct        Float?
+  corpBondPct      Float?
+  govtSecPct       Float?
+  altPct           Float?
+
+  // ── PPF-specific ─────────────────────────────────────────────────────────
+  extensionCount   Int @default(0)
+
+  // ── Bond-specific ────────────────────────────────────────────────────────
+  isin             String?
+  couponFrequency  String?
+  rating           String?
+  nextCouponDate   DateTime?
+
+  // ── Common ───────────────────────────────────────────────────────────────
+  taxBenefit String?
+  isActive   Boolean @default(true)
+  notes      String?
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId])
 }
 
 // ──────────────────────────────────────────

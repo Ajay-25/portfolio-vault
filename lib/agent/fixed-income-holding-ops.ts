@@ -10,7 +10,7 @@ export type FixedIncomeMatch = {
   id:            string;
   type:          string;
   label:         string;
-  issuer:        string | null;
+  institution:   string | null;
   principal:     number;
   rate:          number | null;
   portfolio:     PortfolioKey;
@@ -30,7 +30,7 @@ function toMatch(h: {
   id: string;
   type: string;
   label: string;
-  issuer: string | null;
+  institution: string | null;
   principal: number;
   rate: number | null;
   portfolio: { id: string; name: string };
@@ -39,7 +39,7 @@ function toMatch(h: {
     id:            h.id,
     type:          h.type,
     label:         h.label,
-    issuer:        h.issuer,
+    institution:   h.institution,
     principal:     h.principal,
     rate:          h.rate,
     portfolio:     toPortfolioKey(h.portfolio.id),
@@ -67,7 +67,7 @@ export async function findFixedIncomeHoldings(params: {
   const portfolio = params.portfolio ?? "both";
 
   const holdings = await prisma.fixedIncomeHolding.findMany({
-    where:   { portfolioId: { in: portfolioIds(portfolio) } },
+    where:   { portfolioId: { in: portfolioIds(portfolio) }, isActive: true },
     include: { portfolio: { select: { id: true, name: true } } },
     orderBy: [{ portfolioId: "asc" }, { type: "asc" }, { label: "asc" }],
   });
@@ -86,7 +86,7 @@ export async function findFixedIncomeHoldings(params: {
       (h) =>
         h.label.toLowerCase().includes(kw) ||
         h.type.toLowerCase().includes(kw) ||
-        (h.issuer ?? "").toLowerCase().includes(kw),
+        (h.institution ?? "").toLowerCase().includes(kw),
     );
   }
 
@@ -153,11 +153,11 @@ export async function resolveFixedIncomeTarget(params: {
 }
 
 export type FixedIncomePatch = {
-  label?:     string;
-  principal?: number;
-  rate?:      number | null;
-  issuer?:    string | null;
-  notes?:     string | null;
+  label?:        string;
+  principal?:    number;
+  rate?:         number | null;
+  institution?:  string | null;
+  notes?:        string | null;
 };
 
 export async function patchFixedIncomeHolding(params: {
@@ -172,7 +172,7 @@ export async function patchFixedIncomeHolding(params: {
     (k) => patch[k as keyof FixedIncomePatch] !== undefined,
   );
   if (keys.length === 0) {
-    return "No fields to update. Pass principal, rate, label, issuer, or notes.";
+    return "No fields to update. Pass principal, rate, label, institution, or notes.";
   }
 
   const resolved = await resolveFixedIncomeTarget({
@@ -196,7 +196,7 @@ export async function patchFixedIncomeHolding(params: {
       ...(patch.label !== undefined ? { label: patch.label } : {}),
       ...(patch.principal !== undefined ? { principal: patch.principal } : {}),
       ...(patch.rate !== undefined ? { rate: patch.rate } : {}),
-      ...(patch.issuer !== undefined ? { issuer: patch.issuer } : {}),
+      ...(patch.institution !== undefined ? { institution: patch.institution } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
     },
   });

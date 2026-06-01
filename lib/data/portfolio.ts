@@ -41,7 +41,7 @@ export const getStockHoldings = cache(async (portfolioId: string) => {
 
 export const getFixedIncomeHoldings = cache(async (portfolioId: string) => {
   return prisma.fixedIncomeHolding.findMany({
-    where:   { portfolioId },
+    where:   { portfolioId, isActive: true },
     orderBy: { maturityDate: "asc" },
   });
 });

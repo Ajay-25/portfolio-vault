@@ -2,11 +2,11 @@ import { normalizeExchange, normalizePortfolioScope } from "@/lib/agent/normaliz
 
 /** Fields that must stay strings even when they look numeric (e.g. scheme_code "122639"). */
 const STRING_FIELD =
-  /^(symbol|new_symbol|scheme_code|isin|query|keyword|name|title|description|exchange|portfolio|action|category|type|filter|asset_class|policy_keyword|title_keyword|display_name|note|status|condition|plan_name|label|new_label|issuer)$/i;
+  /^(symbol|new_symbol|scheme_code|isin|query|keyword|name|title|description|exchange|portfolio|action|category|type|filter|asset_class|policy_keyword|title_keyword|display_name|note|status|condition|plan_name|label|new_label|issuer|institution)$/i;
 
 /** Top-level tool args that must never remain nested objects. */
 const SCALAR_PARAM =
-  /^(symbol|new_symbol|scheme_code|isin|query|keyword|name|title|description|exchange|portfolio|action|category|type|filter|asset_class|policy_keyword|title_keyword|display_name|note|status|condition|plan_name|label|new_label|issuer|confirmed)$/i;
+  /^(symbol|new_symbol|scheme_code|isin|query|keyword|name|title|description|exchange|portfolio|action|category|type|filter|asset_class|policy_keyword|title_keyword|display_name|note|status|condition|plan_name|label|new_label|issuer|institution|confirmed)$/i;
 
 function isBlank(value: unknown): boolean {
   return value === undefined || value === null || (typeof value === "string" && value.trim() === "");

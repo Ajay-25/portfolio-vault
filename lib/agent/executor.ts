@@ -44,13 +44,20 @@ import {
   lookupStockSymbols,
 } from "@/lib/apis/stock-symbol-lookup";
 import {
-  findFixedIncomeHoldings,
-  formatFindFixedIncomeText,
-  formatFixedIncomeHoldingLine,
-  formatFixedIncomeOptionsList,
-  patchFixedIncomeHolding,
-  resolveFixedIncomeTarget,
-} from "@/lib/agent/fixed-income-holding-ops";
+  calculateFiProjection,
+  closeFiHolding,
+  createFiHolding,
+  deleteFiHolding,
+  extendPpf,
+  findFiHolding,
+  legacyDeleteFixedIncome,
+  legacyUpdateFixedIncome,
+  listFiHoldings,
+  renewFd,
+  updateFiBalance,
+  updateFiHolding,
+  updateNpsAllocation,
+} from "@/lib/agent/fi-agent-ops";
 import { coerceToolInput, parseOptionalNumber } from "@/lib/agent/coerce-tool-input";
 import { confirmationRequired, isDeleteConfirmed } from "@/lib/agent/delete-confirmation";
 import {
@@ -124,64 +131,59 @@ export async function executeTool(
       }
 
       case "find_fixed_income_holdings": {
-        const portfolio = normalizePortfolioScope(input.portfolio);
-        const type = input.type as string | undefined;
-        const label = input.label as string | undefined;
-        const keyword = input.keyword as string | undefined;
-        if (!type?.trim() && !label?.trim() && !keyword?.trim()) {
-          return "Provide type, label, or keyword to search fixed income holdings.";
+        const keyword =
+          (input.keyword as string | undefined)?.trim() ||
+          (input.label as string | undefined)?.trim() ||
+          (input.type as string | undefined)?.trim() ||
+          "";
+        if (!keyword) {
+          return listFiHoldings({ portfolio: input.portfolio ?? "both" });
         }
-        const rows = await findFixedIncomeHoldings({ portfolio, type, label, keyword });
-        return formatFindFixedIncomeText(rows, { portfolio, type, label, keyword });
-      }
-
-      case "update_fixed_income": {
-        const principal = parseOptionalNumber(input.principal);
-        const rate = parseOptionalNumber(input.rate);
-        const newLabel = input.new_label as string | undefined;
-        return patchFixedIncomeHolding({
-          portfolio: portfolioKey(input),
-          type:      input.type as string | undefined,
-          label:     input.label as string | undefined,
-          keyword:   input.keyword as string | undefined,
-          patch:     {
-            ...(principal !== undefined ? { principal } : {}),
-            ...(rate !== undefined ? { rate } : {}),
-            ...(newLabel?.trim() ? { label: newLabel.trim() } : {}),
-            ...(input.issuer !== undefined ? { issuer: (input.issuer as string) || null } : {}),
-            ...(input.notes !== undefined ? { notes: (input.notes as string) || null } : {}),
-          },
+        return findFiHolding({
+          keyword,
+          type: input.type as string | undefined,
+          portfolio: input.portfolio ?? "both",
         });
       }
 
-      case "delete_fixed_income": {
-        const portfolio = portfolioKey(input);
-        const type = input.type as string | undefined;
-        const label = input.label as string | undefined;
-        const keyword = input.keyword as string | undefined;
+      case "update_fixed_income":
+        return legacyUpdateFixedIncome(input);
 
-        if (!type?.trim() && !label?.trim() && !keyword?.trim()) {
-          return "Provide type, label, or keyword to identify the fixed income holding. Call find_fixed_income_holdings first.";
-        }
+      case "delete_fixed_income":
+        return legacyDeleteFixedIncome(input);
 
-        const resolved = await resolveFixedIncomeTarget({ portfolio, type, label, keyword });
-        if ("error" in resolved) {
-          const opts = resolved.options.length
-            ? `\n${formatFixedIncomeOptionsList(resolved.options)}`
-            : "";
-          return resolved.error + opts;
-        }
+      case "list_fi_holdings":
+        return listFiHoldings(input);
 
-        const row = resolved.holding;
-        const preview = formatFixedIncomeHoldingLine(row).trim();
+      case "find_fi_holding":
+        return findFiHolding(input);
 
-        if (!isDeleteConfirmed(input)) {
-          return confirmationRequired("Remove this fixed income holding?", [preview]);
-        }
+      case "create_fi_holding":
+        return createFiHolding(input);
 
-        await prisma.fixedIncomeHolding.delete({ where: { id: row.id } });
-        return `Deleted [${row.type}] ${row.label} from ${portfolio} portfolio (₹${(row.principal / 100000).toFixed(2)}L principal removed).`;
-      }
+      case "update_fi_balance":
+        return updateFiBalance(input);
+
+      case "update_fi_holding":
+        return updateFiHolding(input);
+
+      case "update_nps_allocation":
+        return updateNpsAllocation(input);
+
+      case "extend_ppf":
+        return extendPpf(input);
+
+      case "renew_fd":
+        return renewFd(input);
+
+      case "close_fi_holding":
+        return closeFiHolding(input);
+
+      case "delete_fi_holding":
+        return deleteFiHolding(input);
+
+      case "calculate_fi_projection":
+        return calculateFiProjection(input);
 
       case "get_insurance_investment_returns": {
         const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";

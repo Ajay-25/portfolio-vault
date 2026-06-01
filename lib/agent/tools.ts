@@ -113,7 +113,7 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "get_portfolio_summary",
-    description: "READ-ONLY summary of portfolio totals (MF + stocks + fixed income + insurance). Does NOT modify data. To remove or edit fixed income use delete_fixed_income / update_fixed_income. To edit stocks/MF use update_stock_holding / update_mf_holding.",
+    description: "READ-ONLY summary of portfolio totals (MF + stocks + fixed income + insurance). Does NOT modify data. To edit fixed income use find_fi_holding / update_fi_balance / update_fi_holding / close_fi_holding. To edit stocks/MF use update_stock_holding / update_mf_holding.",
     parameters: {
       type:       "object",
       properties: {
@@ -491,7 +491,7 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "find_fixed_income_holdings",
-    description: "Search fixed income holdings (PPF, EPF, NPS, FD, liquid, etc.) by type or label keyword. Call BEFORE delete_fixed_income or update_fixed_income. Never call with empty args.",
+    description: "Legacy search for fixed income holdings. Prefer find_fi_holding. Call before update/delete if target unclear. Empty args lists all.",
     parameters: {
       type:       "object",
       properties: {
@@ -510,14 +510,14 @@ export const AGENT_TOOLS = [
         },
         keyword: {
           type:        "string",
-          description: "Partial match on label, type, or issuer",
+          description: "Partial match on label, type, or institution",
         },
       },
     },
   },
   {
     name:        "update_fixed_income",
-    description: "Patch an EXISTING fixed income holding (principal, rate, label). Call find_fixed_income_holdings first. Pass ONLY fields being changed.",
+    description: "Legacy patch for fixed income (principal, rate, label). Prefer update_fi_balance for balance changes or update_fi_holding for other fields.",
     parameters: {
       type:       "object",
       properties: {
@@ -528,14 +528,14 @@ export const AGENT_TOOLS = [
         principal: { type: "string", description: "New principal amount (numeric value)" },
         rate:      { type: "string", description: "New rate % p.a. (numeric value)" },
         new_label: { type: "string", description: "Rename holding" },
-        issuer:    { type: "string" },
+        institution: { type: "string" },
         notes:     { type: "string" },
       },
     },
   },
   {
     name:        "delete_fixed_income",
-    description: "Remove a fixed income holding (e.g. duplicate liquid counted in MF). First call WITHOUT confirmed to preview; call again with confirmed:\"true\" after user confirms. Use FLAT JSON string fields only — e.g. {\"type\":\"liquid\",\"label\":\"Liquid / Arbitrage\",\"portfolio\":\"mine\",\"confirmed\":\"true\"}",
+    description: "Legacy alias — prefer delete_fi_holding (mistakes) or close_fi_holding (matured). First call WITHOUT confirmed to preview; call again with confirmed:\"true\" after user confirms.",
     parameters: {
       type:       "object",
       properties: {
@@ -543,10 +543,245 @@ export const AGENT_TOOLS = [
         type:      { type: "string", description: "Type e.g. liquid" },
         label:     { type: "string", description: "Label e.g. Liquid / Arbitrage" },
         keyword:   { type: "string", description: "Search if type/label uncertain" },
+        id:        { type: "string", description: "Record ID from find_fi_holding" },
         confirmed: {
           type:        "boolean",
           description: "Must be true only after user explicitly confirms",
         },
+      },
+    },
+  },
+  {
+    name:        "list_fi_holdings",
+    description:
+      "List all fixed income instruments for a portfolio. Use to show holdings or before updating/deleting to confirm target.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Which portfolio to list. Defaults to mine.",
+        },
+        type_filter: {
+          type:        "string",
+          description: "Optional filter: ppf | epf | nps_tier1 | nps_tier2 | fd | bond | nsc | scss | liquid | sweep_fd",
+        },
+      },
+    },
+  },
+  {
+    name:        "find_fi_holding",
+    description:
+      "Search fixed income by keyword, type, or institution. ALWAYS use before update/delete if target isn't clear. " +
+      "Examples: 'ppf', 'hdfc fd', 'bajaj', 'nps', 'epf'. Returns ID for subsequent tools.",
+    parameters: {
+      type:       "object",
+      properties: {
+        keyword: {
+          type:        "string",
+          description: "Search label, institution, account, UAN, PRAN",
+        },
+        type: {
+          type:        "string",
+          description: "Optional exact type filter",
+        },
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+        },
+      },
+    },
+  },
+  {
+    name:        "create_fi_holding",
+    description:
+      "Create a fixed income instrument. Smart defaults per type (PPF 7.1% EEE, EPF 8.25%, FD quarterly cumulative, etc.). " +
+      "Ask user for missing required info before calling.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio:      { type: "string", enum: ["mine", "mother"] },
+        type:           { type: "string", description: "ppf | epf | nps_tier1 | nps_tier2 | fd | rd | bond | nsc | scss | liquid | sweep_fd" },
+        label:          { type: "string" },
+        institution:    { type: "string" },
+        accountNumber:  { type: "string" },
+        principal:      { type: "number", description: "Invested amount in ₹" },
+        currentValue:   { type: "number" },
+        rate:           { type: "number", description: "Annual rate %" },
+        startDate:      { type: "string", description: "ISO date" },
+        maturityDate:   { type: "string", description: "ISO date" },
+        annualContrib:  { type: "number" },
+        monthlyContrib: { type: "number" },
+        maturityAmount: { type: "number" },
+        compoundingFreq:{ type: "string", enum: ["monthly", "quarterly", "annual", "on_maturity"] },
+        interestPayout: { type: "string", enum: ["cumulative", "monthly", "quarterly", "annual"] },
+        autoRenewal:    { type: "boolean" },
+        isTaxSaving:    { type: "boolean" },
+        uan:            { type: "string" },
+        employerName:   { type: "string" },
+        employeeMonthly:{ type: "number" },
+        employerMonthly:{ type: "number" },
+        epsBalance:     { type: "number" },
+        pran:           { type: "string" },
+        fundManager:    { type: "string" },
+        investmentChoice:{ type: "string", enum: ["active", "auto_lc75", "auto_lc50", "auto_lc25"] },
+        equityPct:      { type: "number" },
+        corpBondPct:    { type: "number" },
+        govtSecPct:     { type: "number" },
+        altPct:         { type: "number" },
+        extensionCount: { type: "number" },
+        isin:           { type: "string" },
+        couponFrequency:{ type: "string", enum: ["monthly", "quarterly", "half_yearly", "annual"] },
+        rating:         { type: "string" },
+        nextCouponDate: { type: "string" },
+        taxBenefit:     { type: "string", enum: ["EEE", "80C", "80CCD", "taxable", "none"] },
+        notes:          { type: "string" },
+      },
+      required: ["portfolio", "type", "principal"],
+    },
+  },
+  {
+    name:        "update_fi_balance",
+    description:
+      "Quick balance update — most common FI operation. " +
+      "'My PPF is now ₹8.5L', 'EPF corpus ₹2.4L'. Sets currentValue and valueAsOf.",
+    parameters: {
+      type:       "object",
+      properties: {
+        id:         { type: "string", description: "ID from find_fi_holding (preferred)" },
+        keyword:    { type: "string", description: "Search if ID unknown: ppf, epf, nps, hdfc fd" },
+        portfolio:  { type: "string", enum: ["mine", "mother"] },
+        new_value:  { type: "number", description: "New balance in ₹" },
+        as_of_date: { type: "string", description: "ISO date, defaults to today" },
+      },
+      required: ["new_value"],
+    },
+  },
+  {
+    name:        "update_fi_holding",
+    description:
+      "Partial update — pass ONLY fields that change via fields_to_update or as top-level fields. " +
+      "Use for FD maturity, NPS fund manager, EPF UAN, PPF contribution, bond ISIN, rate changes.",
+    parameters: {
+      type:       "object",
+      properties: {
+        id:               { type: "string" },
+        keyword:          { type: "string" },
+        portfolio:        { type: "string", enum: ["mine", "mother"] },
+        fields_to_update: {
+          type:        "object",
+          description: "Key-value pairs to change. Or pass fields as top-level args.",
+        },
+        label:            { type: "string" },
+        institution:      { type: "string" },
+        principal:        { type: "number" },
+        currentValue:     { type: "number" },
+        rate:             { type: "number" },
+        annualContrib:    { type: "number" },
+        uan:              { type: "string" },
+        employerName:     { type: "string" },
+        fundManager:      { type: "string" },
+        notes:            { type: "string" },
+      },
+    },
+  },
+  {
+    name:        "update_nps_allocation",
+    description:
+      "Update NPS E+C+G+A allocation (must total 100%). Alternative assets max 5%.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio:         { type: "string", enum: ["mine", "mother"] },
+        id:                { type: "string" },
+        equity_pct:        { type: "number" },
+        corp_bond_pct:     { type: "number" },
+        govt_sec_pct:      { type: "number" },
+        alt_pct:           { type: "number" },
+        fund_manager:      { type: "string" },
+        investment_choice: { type: "string", enum: ["active", "auto_lc75", "auto_lc50", "auto_lc25"] },
+      },
+    },
+  },
+  {
+    name:        "extend_ppf",
+    description:
+      "Record PPF 5-year extension. ASK user if with_deposits or without — affects 80C planning.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio:                    { type: "string", enum: ["mine", "mother"] },
+        id:                             { type: "string" },
+        with_deposits:                  { type: "boolean", description: "true = continue deposits; false = passive extension" },
+        annual_contrib_if_continuing:   { type: "number" },
+      },
+      required: ["with_deposits"],
+    },
+  },
+  {
+    name:        "renew_fd",
+    description: "Record FD renewal — new maturity date, optional new rate/principal.",
+    parameters: {
+      type:       "object",
+      properties: {
+        id:                { type: "string" },
+        keyword:           { type: "string" },
+        portfolio:         { type: "string", enum: ["mine", "mother"] },
+        new_maturity_date: { type: "string", description: "ISO date" },
+        new_rate:          { type: "number" },
+        new_principal:     { type: "number" },
+      },
+      required: ["new_maturity_date"],
+    },
+  },
+  {
+    name:        "close_fi_holding",
+    description:
+      "Mark instrument inactive (matured FD, redeemed bond, withdrawn PPF). Keeps history. " +
+      "Ask user to confirm before calling.",
+    parameters: {
+      type:       "object",
+      properties: {
+        id:          { type: "string" },
+        keyword:     { type: "string" },
+        portfolio:   { type: "string", enum: ["mine", "mother"] },
+        final_value: { type: "number" },
+        notes:       { type: "string" },
+        confirmed:   { type: "boolean", description: "true after user confirms" },
+      },
+    },
+  },
+  {
+    name:        "delete_fi_holding",
+    description:
+      "Permanently delete a record — ONLY for mistakes/duplicates. Use close_fi_holding for matured instruments. " +
+      "Requires id + user confirmation.",
+    parameters: {
+      type:       "object",
+      properties: {
+        id:        { type: "string", description: "ID from find_fi_holding" },
+        portfolio: { type: "string", enum: ["mine", "mother"] },
+        confirmed: { type: "boolean" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name:        "calculate_fi_projection",
+    description:
+      "Project maturity/future value for PPF, FD, NPS, etc. Use id/keyword or manual principal+rate+years.",
+    parameters: {
+      type:       "object",
+      properties: {
+        id:             { type: "string" },
+        keyword:        { type: "string" },
+        portfolio:      { type: "string", enum: ["mine", "mother"] },
+        type:           { type: "string" },
+        principal:      { type: "number" },
+        rate:           { type: "number" },
+        years:          { type: "number" },
+        annual_addition:{ type: "number" },
       },
     },
   },
@@ -660,6 +895,14 @@ export const WRITE_TOOLS = new Set([
   "find_fixed_income_holdings",
   "update_fixed_income",
   "delete_fixed_income",
+  "create_fi_holding",
+  "update_fi_balance",
+  "update_fi_holding",
+  "update_nps_allocation",
+  "extend_ppf",
+  "renew_fd",
+  "close_fi_holding",
+  "delete_fi_holding",
   "add_action_item",
   "complete_action_item",
   "log_snapshot",

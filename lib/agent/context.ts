@@ -70,8 +70,13 @@ async function buildAgentContextInner(): Promise<string> {
       stockIndex.push(`${s.symbol}:${s.exchange} ${s.displayName ?? s.symbol} (${s.qty}@${s.currency === "USD" ? "$" : "₹"}${s.avgPrice}${live ? ` CMP ${live.price.toFixed(0)}` : ""})`);
     }
 
-    const fiVal = p.fixedIncomeHoldings.reduce((s, h) => s + h.principal, 0);
-    const fiIndex = p.fixedIncomeHoldings.map((h) => `${h.type}:${h.label} ${lakhs(h.principal)}`).join("; ");
+    const fiVal = p.fixedIncomeHoldings
+      .filter((h) => h.isActive)
+      .reduce((s, h) => s + (h.currentValue ?? h.principal), 0);
+    const fiIndex = p.fixedIncomeHoldings
+      .filter((h) => h.isActive)
+      .map((h) => `${h.type}:${h.label} ${lakhs(h.currentValue ?? h.principal)}`)
+      .join("; ");
 
     const ulipPolicies = p.insurancePolicies.filter(
       (pol) => pol.isInvestmentLinked || pol.type === "endowment" || pol.type === "money_back",
@@ -110,6 +115,30 @@ async function buildAgentContextInner(): Promise<string> {
     ? actions.map((a) => `[${a.priority[0]?.toUpperCase()}] ${a.title}`).join(" | ")
     : "none";
 
+  const fiHoldings = await prisma.fixedIncomeHolding.findMany({
+    where:   { isActive: true },
+    include: { portfolio: { select: { name: true } } },
+    orderBy: { type: "asc" },
+  });
+
+  const fiContext = fiHoldings.length
+    ? fiHoldings
+        .map((h) => {
+          const val = h.currentValue ?? h.principal;
+          return (
+            `  • [${h.id}] ${h.type.toUpperCase().replace(/_/g, " ")} — ${h.label}` +
+            (h.institution ? ` (${h.institution})` : "") +
+            ` · ₹${(val / 100000).toFixed(2)}L` +
+            (h.rate ? ` @ ${h.rate}%` : "") +
+            (h.maturityDate
+              ? ` → matures ${h.maturityDate.toLocaleDateString("en-IN")}`
+              : "") +
+            ` [${h.portfolio.name}]`
+          );
+        })
+        .join("\n")
+    : "  No fixed income instruments recorded.";
+
   return `You are Vault — portfolio assistant for Vaulted. Today: ${today}. USD/INR: ${usdInr.toFixed(2)}.
 Tool portfolio ids: mine = primary, mother = secondary.
 
@@ -119,6 +148,11 @@ ${portfolioBlocks.join("\n")}
 SIP: ${thousands(sip7)} on 7th (${next7}d) · ${thousands(sip28)} on 28th (${next28}d)
 Triggers: ${triggersLine}
 Open actions (${actions.length}): ${actionsLine}
+
+═══════════════════════════════════════
+FIXED INCOME HOLDINGS (live)
+═══════════════════════════════════════
+${fiContext}
 
 TOOLS — call for live returns/P&L: get_stock_returns, get_mf_returns, get_fixed_income_returns, get_insurance_investment_returns, get_investment_returns (all assets). Never say you cannot fetch live prices.
 Bulk deletes: use delete_all_mf_holdings or delete_all_stocks when user wants to clear an entire asset class — do NOT call delete_mf_holding once per fund.
@@ -154,9 +188,14 @@ DELETE SAFETY (critical):
 
 FIXED INCOME (critical):
 - There is NO update_portfolio_summary tool — never invent it. get_portfolio_summary is READ-ONLY.
-- To remove a fixed income row (e.g. Liquid/Arbitrage already tracked in MF): find_fixed_income_holdings → delete_fixed_income (preview, then confirmed:\"true\" after user says yes).
-- Tool args must be flat JSON strings — never nest fields as objects. Example delete: {\"type\":\"liquid\",\"label\":\"Liquid / Arbitrage\",\"portfolio\":\"mine\",\"confirmed\":\"true\"}
-- To change principal/rate: find_fixed_income_holdings → update_fixed_income.
+- Prefer find_fi_holding before any FI write if the target isn't clear from context above.
+- Simple balance updates: update_fi_balance (most common) — always show before/after values.
+- Partial field updates: update_fi_holding — pass ONLY fields that change.
+- NPS allocation: update_nps_allocation — E+C+G+A must total 100%; alt max 5%. Ask how to split if user only gives equity%.
+- PPF extension: extend_ppf — always clarify with_deposits vs without (affects 80C).
+- Matured/withdrawn instruments: close_fi_holding (keeps history). delete_fi_holding only for mistakes/duplicates.
+- Legacy tools find_fixed_income_holdings / update_fixed_income / delete_fixed_income still work.
+- Tool args must be flat JSON strings — never nest fields as objects except fields_to_update.
 - Default portfolio is mine unless user says mother/mom.
 
 RULES: Be concise. Use ₹ and L/Cr formatting.`;
@@ -164,7 +203,7 @@ RULES: Be concise. Use ₹ and L/Cr formatting.`;
 
 /** Cached ~2 min — tools always fetch fresh data when called. */
 export async function buildAgentContext(): Promise<string> {
-  return unstable_cache(buildAgentContextInner, ["agent-context-v6"], {
+  return unstable_cache(buildAgentContextInner, ["agent-context-v7"], {
     revalidate: 120,
     tags:       ["agent-context"],
   })();

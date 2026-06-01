@@ -68,7 +68,11 @@ export function WealthSummaryView({ data }: WealthSummaryViewProps) {
         <StatCard
           label="Fixed income"
           value={formatINR(data.fixedIncomeTotal, true)}
-          sub={data.fixedIncomeTotal > 0 ? "PPF · EPF · NPS · liquid" : "Not configured"}
+          sub={
+            data.fixedIncomeTotal > 0
+              ? `${data.fixedIncomeRate.toFixed(2)}% avg · ${data.upcomingMaturities[0] ? `next in ${Math.ceil((data.upcomingMaturities[0].maturityDate.getTime() - Date.now()) / 86400000)}d` : "no maturity soon"}`
+              : "Not configured"
+          }
           valueColor="var(--cyan)"
         />
       </div>

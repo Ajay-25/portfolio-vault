@@ -1,6 +1,11 @@
 import { getPortfolioPageData } from "@/lib/portfolio-data";
-import { getFixedIncomeHoldings, getActionItemsByOwner } from "@/lib/data/portfolio";
+import { getActionItemsByOwner } from "@/lib/data/portfolio";
 import { absoluteReturn } from "@/lib/utils/finance";
+import {
+  fiValue,
+  getFixedIncomeHoldings,
+  getFixedIncomeSummary,
+} from "@/lib/fixed-income-data";
 import {
   resolveOwner,
   type WealthOwnerSlug,
@@ -28,6 +33,7 @@ export type WealthSummaryData = {
   mfTotal: number;
   stockTotal: number;
   fixedIncomeTotal: number;
+  fixedIncomeRate:  number;
   total: number;
   invested: number;
   gainPct: number | null;
@@ -49,18 +55,16 @@ export async function getWealthSummaryData(
   const owner = resolveOwner(ownerSlug);
   if (!owner) return null;
 
-  const [portfolioData, fixedIncomeHoldings, actionItems] = await Promise.all([
+  const [portfolioData, fixedIncomeHoldings, fiSummary, actionItems] = await Promise.all([
     getPortfolioPageData(owner.portfolioId),
     getFixedIncomeHoldings(owner.portfolioId),
+    getFixedIncomeSummary(owner.portfolioId),
     getActionItemsByOwner(owner.ownerId, 5),
   ]);
 
   if (!portfolioData) return null;
 
-  const fixedIncomeTotal = fixedIncomeHoldings.reduce(
-    (sum, h) => sum + h.principal,
-    0,
-  );
+  const fixedIncomeTotal = fixedIncomeHoldings.reduce((sum, h) => sum + fiValue(h), 0);
 
   const mfTotal = portfolioData.mfTotal;
   const stockTotal = portfolioData.stockTotal;
@@ -116,7 +120,7 @@ export async function getWealthSummaryData(
     .map((h) => ({
       label: h.label,
       maturityDate: h.maturityDate!,
-      principal: h.principal,
+      principal: h.maturityAmount ?? fiValue(h),
     }));
 
   const quickLinks = [
@@ -134,6 +138,7 @@ export async function getWealthSummaryData(
     mfTotal,
     stockTotal,
     fixedIncomeTotal,
+    fixedIncomeRate:  fiSummary.weightedRate,
     total,
     invested,
     gainPct,

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getAllPortfolios, getTriggers, getActionItems } from "@/lib/data/portfolio";
 import { getUSDINR } from "@/lib/data/fx-server";
 import { getUrgentInsuranceRenewals } from "@/lib/insurance-data";
+import { getUpcomingFixedIncomeMaturities, fiValue } from "@/lib/fixed-income-data";
 import { formatINR, absoluteReturn } from "@/lib/utils/finance";
 import { TopBar } from "@/components/layout/top-bar";
 import { NiftyTrigger } from "@/components/dashboard/nifty-trigger";
@@ -13,12 +14,13 @@ import { SkeletonTable } from "@/components/ui/skeletons";
 export const revalidate = 300; // ISR: revalidate every 5 minutes
 
 async function getDashboardData() {
-  const [portfolios, triggers, actions, usdInr, urgentRenewals] = await Promise.all([
+  const [portfolios, triggers, actions, usdInr, urgentRenewals, upcomingFI] = await Promise.all([
     getAllPortfolios(),
     getTriggers(),
     getActionItems(5),
     getUSDINR(),
     getUrgentInsuranceRenewals(30),
+    getUpcomingFixedIncomeMaturities(30, 3),
   ]);
 
   // Calculate portfolio values (avgNAV for MF — live NAVs stream in via MFHoldingsPreview)
@@ -56,11 +58,11 @@ async function getDashboardData() {
   const totalMFInvested = portfolioValues.reduce((s, p) => s + p.mfInvested, 0);
   const totalGain       = totalMFInvested > 0 ? absoluteReturn(totalMFInvested, totalNetWorth) : 0;
 
-  return { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals };
+  return { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals, upcomingFI };
 }
 
 export default async function DashboardPage() {
-  const { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals } =
+  const { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals, upcomingFI } =
     await getDashboardData();
 
   const myPortfolio  = portfolioValues.find((p) => p.type === "primary");
@@ -250,6 +252,42 @@ export default async function DashboardPage() {
             <NiftyTrigger triggers={triggers} />
           </div>
         </div>
+
+        {upcomingFI.length > 0 && (
+          <div
+            className="card animate-slide-up"
+            style={{ padding: "16px 20px", borderColor: "rgba(29,158,117,0.3)" }}
+          >
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="font-mono text-lg" style={{ color: "var(--teal)" }}>
+                ◈
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm" style={{ color: "var(--text)" }}>
+                  {upcomingFI.length} fixed income maturit{upcomingFI.length > 1 ? "ies" : "y"} in 30 days
+                </div>
+                <div className="font-mono text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  {upcomingFI
+                    .map((h) => {
+                      const days = h.maturityDate
+                        ? Math.ceil((h.maturityDate.getTime() - Date.now()) / 86400000)
+                        : 0;
+                      const val = h.maturityAmount ?? fiValue(h);
+                      return `${h.label} in ${days}d · ${formatINR(val, true)} ready`;
+                    })
+                    .join(" · ")}
+                </div>
+              </div>
+              <Link
+                href="/dashboard/wealth/mine/fixed-income"
+                className="ml-auto font-mono text-xs"
+                style={{ color: "var(--teal)" }}
+              >
+                VIEW →
+              </Link>
+            </div>
+          </div>
+        )}
 
         {urgentRenewals.length > 0 && (
           <div

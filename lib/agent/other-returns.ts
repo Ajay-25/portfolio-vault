@@ -29,7 +29,7 @@ function estimateAccruedValue(
 export type FixedIncomeReturnRow = {
   type:            string;
   label:           string;
-  issuer:          string | null;
+  institution:     string | null;
   portfolioName:   string;
   portfolioKey:    PortfolioKey;
   principal:       number;
@@ -54,17 +54,17 @@ export async function fetchFixedIncomeReturns(options: {
   });
 
   let rows: FixedIncomeReturnRow[] = portfolios.flatMap((p) =>
-    p.fixedIncomeHoldings.map((h) => {
+    p.fixedIncomeHoldings.filter((h) => h.isActive).map((h) => {
       const estimated = estimateAccruedValue(h.principal, h.rate, h.startDate);
-      const current   = estimated ?? h.principal;
-      const gainInr   = estimated != null ? current - h.principal : null;
+      const current   = h.currentValue ?? estimated ?? h.principal;
+      const gainInr   = h.currentValue != null || estimated != null ? current - h.principal : null;
       const gainPct   =
         gainInr != null && h.principal > 0 ? (gainInr / h.principal) * 100 : null;
 
       return {
         type:           h.type,
         label:          h.label,
-        issuer:         h.issuer,
+        institution:    h.institution,
         portfolioName:  p.name,
         portfolioKey:   toPortfolioKey(p.id),
         principal:      h.principal,
@@ -73,7 +73,7 @@ export async function fetchFixedIncomeReturns(options: {
         estimatedValue: estimated,
         gainInr,
         gainPct,
-        isEstimate:     estimated != null,
+        isEstimate:     estimated != null && h.currentValue == null,
       };
     }),
   );

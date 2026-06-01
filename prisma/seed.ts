@@ -224,66 +224,244 @@ async function main() {
   }
   console.log(`✓ Action items seeded: ${actionItems.length}`);
 
-  // ── Fixed Income (migrated from NetWorthConfig) ──────────────────────────
-  const primaryFixedIncome = [
-    { id: "fi-ppf-primary", type: "ppf", label: "PPF", principal: 1200000, rate: 7.1, taxBenefit: "80C" },
-    { id: "fi-epf-primary", type: "epf", label: "EPF", principal: 200000, rate: 8.25 },
-    { id: "fi-nps-primary", type: "nps", label: "NPS", principal: 200000, rate: null },
-    { id: "fi-liquid-primary", type: "liquid", label: "Liquid / Arbitrage", principal: 500000, rate: null },
-  ];
-
-  for (const fi of primaryFixedIncome) {
-    await prisma.fixedIncomeHolding.upsert({
-      where: { id: fi.id },
-      update: { principal: fi.principal, rate: fi.rate ?? undefined },
-      create: {
-        portfolioId: myPortfolio.id,
-        issuer: null,
-        startDate: null,
-        maturityDate: null,
-        notes: null,
-        ...fi,
-        rate: fi.rate ?? undefined,
-      },
-    });
-  }
-  console.log(`✓ Primary fixed income: ${primaryFixedIncome.length} holdings`);
-
-  const momFixedIncome = [
+  // ── Fixed Income ─────────────────────────────────────────────────────────
+  const myFI = [
     {
-      id: "fi-fd-mom-hdfc",
-      type: "fd",
-      label: "HDFC FD Mar 2027",
-      issuer: "HDFC Bank",
-      principal: 500000,
-      rate: 7.0,
-      maturityDate: new Date("2027-03-15"),
+      id:            "fi-mine-ppf",
+      type:          "ppf",
+      label:         "PPF Account",
+      institution:   "SBI Bank",
+      accountNumber: "XXXXXXXXX4827",
+      principal:     150000,
+      currentValue:  840000,
+      valueAsOf:     new Date("2026-05-01"),
+      rate:          7.1,
+      startDate:     new Date("2018-04-01"),
+      maturityDate:  new Date("2033-04-01"),
+      annualContrib: 150000,
+      taxBenefit:    "EEE",
+      extensionCount: 0,
+      notes:         "Invest before 5th of month for max interest",
     },
     {
-      id: "fi-fd-mom-sbi",
-      type: "fd",
-      label: "SBI FD Jun 2026",
-      issuer: "SBI",
-      principal: 300000,
-      rate: 6.8,
-      maturityDate: new Date("2026-06-01"),
+      id:              "fi-mine-epf",
+      type:            "epf",
+      label:           "EPF Account",
+      institution:     "EPFO",
+      accountNumber:   "100-XXXXXXXX-XX",
+      uan:             "100XXXXXXXXX",
+      principal:       200000,
+      currentValue:    200000,
+      valueAsOf:       new Date("2026-05-01"),
+      rate:            8.25,
+      monthlyContrib:  5000,
+      employeeMonthly: 5000,
+      employerMonthly: 1835,
+      epsBalance:      45000,
+      employerName:    "Acme Technologies Pvt Ltd",
+      taxBenefit:      "EEE",
+    },
+    {
+      id:               "fi-mine-nps1",
+      type:             "nps_tier1",
+      label:            "NPS Tier I",
+      institution:      "PFRDA",
+      pran:             "11XXXXXXXXXX",
+      principal:        200000,
+      currentValue:     200000,
+      valueAsOf:        new Date("2026-05-01"),
+      fundManager:      "SBI Pension Funds",
+      investmentChoice: "active",
+      equityPct:        60,
+      corpBondPct:      30,
+      govtSecPct:       8,
+      altPct:           2,
+      monthlyContrib:   6000,
+      annualContrib:    72000,
+      taxBenefit:       "80CCD",
+      notes:            "Additional 80CCD(1B) benefit of ₹50,000 beyond 80C limit",
     },
   ];
 
-  for (const fi of momFixedIncome) {
+  const myFDs = [
+    {
+      id:              "fi-mine-fd1",
+      type:            "fd",
+      label:           "HDFC FD",
+      institution:     "HDFC Bank",
+      accountNumber:   "HDFC-2024-8821",
+      principal:       200000,
+      rate:            7.25,
+      startDate:       new Date("2025-06-19"),
+      maturityDate:    new Date("2026-06-19"),
+      maturityAmount:  214500,
+      compoundingFreq: "quarterly",
+      interestPayout:  "cumulative",
+      autoRenewal:     false,
+      isTaxSaving:     false,
+      taxBenefit:      "taxable",
+    },
+    {
+      id:              "fi-mine-fd2",
+      type:            "fd",
+      label:           "SBI Tax-Saving FD",
+      institution:     "SBI",
+      accountNumber:   "SBI-TS-2023-4412",
+      principal:       150000,
+      rate:            7.0,
+      startDate:       new Date("2023-12-01"),
+      maturityDate:    new Date("2028-12-01"),
+      maturityAmount:  211350,
+      compoundingFreq: "quarterly",
+      interestPayout:  "cumulative",
+      autoRenewal:     false,
+      isTaxSaving:     true,
+      taxBenefit:      "80C",
+      notes:           "5-year lock-in. Cannot withdraw early.",
+    },
+    {
+      id:              "fi-mine-fd3",
+      type:            "fd",
+      label:           "Bajaj Finance FD",
+      institution:     "Bajaj Finance",
+      accountNumber:   "BFL-2025-7731",
+      principal:       300000,
+      rate:            7.75,
+      startDate:       new Date("2025-03-01"),
+      maturityDate:    new Date("2027-03-01"),
+      maturityAmount:  349200,
+      compoundingFreq: "annual",
+      interestPayout:  "cumulative",
+      autoRenewal:     true,
+      isTaxSaving:     false,
+      taxBenefit:      "taxable",
+      rating:          "AAA",
+      notes:           "NBFC FD. Higher rate. DICGC not applicable.",
+    },
+  ];
+
+  const myBonds = [
+    {
+      id:              "fi-mine-nsc",
+      type:            "nsc",
+      label:           "NSC VIII Issue",
+      institution:     "Post Office",
+      principal:       150000,
+      rate:            7.7,
+      startDate:       new Date("2023-03-01"),
+      maturityDate:    new Date("2028-03-01"),
+      maturityAmount:  216450,
+      couponFrequency: "annual",
+      taxBenefit:      "80C",
+      notes:           "Interest taxable but qualifies for 80C each year as deemed reinvestment",
+    },
+    {
+      id:              "fi-mine-bond",
+      type:            "bond",
+      label:           "HDFC NCD",
+      institution:     "HDFC Ltd",
+      isin:            "INE001A07QP1",
+      principal:       150000,
+      rate:            8.1,
+      startDate:       new Date("2024-09-01"),
+      maturityDate:    new Date("2028-09-01"),
+      couponFrequency: "annual",
+      nextCouponDate:  new Date("2026-09-01"),
+      rating:          "AAA",
+      taxBenefit:      "taxable",
+    },
+  ];
+
+  const myLiquid = [
+    {
+      id:           "fi-mine-savings",
+      type:         "liquid",
+      label:        "HDFC Savings Account",
+      institution:  "HDFC Bank",
+      principal:    350000,
+      currentValue: 350000,
+      rate:         3.5,
+      taxBenefit:   "taxable",
+      notes:        "Emergency fund — keep at ₹3-5L",
+    },
+    {
+      id:           "fi-mine-liquid-mf",
+      type:         "liquid",
+      label:        "Parag Parikh Liquid Fund",
+      institution:  "PPFAS AMC",
+      principal:    120000,
+      currentValue: 120000,
+      rate:         7.2,
+      taxBenefit:   "taxable",
+      notes:        "T+1 redemption. Better than savings account.",
+    },
+  ];
+
+  const allMyFI = [...myFI, ...myFDs, ...myBonds, ...myLiquid];
+  for (const item of allMyFI) {
     await prisma.fixedIncomeHolding.upsert({
-      where: { id: fi.id },
-      update: { principal: fi.principal, rate: fi.rate },
-      create: {
-        portfolioId: momPortfolio.id,
-        taxBenefit: null,
-        startDate: null,
-        notes: null,
-        ...fi,
-      },
+      where:  { id: item.id },
+      update: {},
+      create: { ...item, portfolioId: myPortfolio.id },
     });
   }
-  console.log(`✓ Mother's fixed income: ${momFixedIncome.length} holdings`);
+  console.log(`✓ My fixed income: ${allMyFI.length} instruments`);
+
+  const momFI = [
+    {
+      id:            "fi-mom-ppf",
+      type:          "ppf",
+      label:         "PPF Account",
+      institution:   "Post Office",
+      principal:     100000,
+      currentValue:  280000,
+      valueAsOf:     new Date("2026-05-01"),
+      rate:          7.1,
+      startDate:     new Date("2015-04-01"),
+      maturityDate:  new Date("2030-04-01"),
+      annualContrib: 100000,
+      extensionCount: 0,
+      taxBenefit:    "EEE",
+    },
+    {
+      id:              "fi-mom-fd1",
+      type:            "fd",
+      label:           "SBI Senior Citizen FD",
+      institution:     "SBI",
+      principal:       300000,
+      rate:            7.75,
+      startDate:       new Date("2025-01-01"),
+      maturityDate:    new Date("2026-12-31"),
+      maturityAmount:  349000,
+      compoundingFreq: "quarterly",
+      interestPayout:  "monthly",
+      autoRenewal:     true,
+      taxBenefit:      "taxable",
+      notes:           "Monthly payout for household income",
+    },
+    {
+      id:              "fi-mom-scss",
+      type:            "scss",
+      label:           "Senior Citizens Savings Scheme",
+      institution:     "Post Office",
+      principal:       500000,
+      rate:            8.2,
+      startDate:       new Date("2023-07-01"),
+      maturityDate:    new Date("2028-07-01"),
+      couponFrequency: "quarterly",
+      taxBenefit:      "80C",
+      notes:           "Quarterly payout. Max ₹30L limit. 80C deductible.",
+    },
+  ];
+
+  for (const item of momFI) {
+    await prisma.fixedIncomeHolding.upsert({
+      where:  { id: item.id },
+      update: {},
+      create: { ...item, portfolioId: momPortfolio.id },
+    });
+  }
+  console.log(`✓ Mother's fixed income: ${momFI.length} instruments`);
 
   // ── My Insurance Policies ─────────────────────────────────────────────────
   const myInsurance = [
