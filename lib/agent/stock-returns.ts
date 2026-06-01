@@ -30,6 +30,7 @@ export type StockReturnRow = {
   avgPrice:        number;
   livePrice:       number | null;
   dayChangePct:    number | null;
+  action:          string | null;
   investedInr:     number;
   currentValueInr: number;
   gainInr:         number | null;
@@ -84,6 +85,7 @@ export async function fetchStockReturns(options: {
       avgPrice:        h.avgPrice,
       livePrice,
       dayChangePct:    live?.changePct ?? null,
+      action:          h.action,
       investedInr,
       currentValueInr,
       gainInr,
@@ -104,12 +106,21 @@ export function formatStockReturnLine(r: StockReturnRow): string {
     ? priceLabel(r.currency, r.livePrice)
     : "CMP unavailable";
 
+  const extras: string[] = [];
+  if (r.dayChangePct != null) {
+    const sign = r.dayChangePct >= 0 ? "+" : "";
+    extras.push(`day ${sign}${r.dayChangePct.toFixed(2)}%`);
+  }
+  if (r.action?.trim()) extras.push(`saved action: ${r.action.trim()}`);
+
+  const suffix = extras.length ? ` | ${extras.join(" | ")}` : "";
+
   if (r.gainPct == null) {
-    return `  • ${name} [${r.symbol}:${r.exchange}] (${r.portfolioName}): ${r.qty} @ ${priceLabel(r.currency, r.avgPrice)} avg — ${cmp}`;
+    return `  • ${name} [${r.symbol}:${r.exchange}] (${r.portfolioName}): ${r.qty} @ ${priceLabel(r.currency, r.avgPrice)} avg — ${cmp}${suffix}`;
   }
 
   const sign = r.gainPct >= 0 ? "+" : "";
-  return `  • ${name} [${r.symbol}:${r.exchange}] (${r.portfolioName}): ${r.qty} @ ${priceLabel(r.currency, r.avgPrice)} avg → ${cmp} | ${sign}${r.gainPct.toFixed(2)}% (${formatInrSigned(r.gainInr!)})`;
+  return `  • ${name} [${r.symbol}:${r.exchange}] (${r.portfolioName}): ${r.qty} @ ${priceLabel(r.currency, r.avgPrice)} avg → ${cmp} | ${sign}${r.gainPct.toFixed(2)}% (${formatInrSigned(r.gainInr!)})${suffix}`;
 }
 
 export function formatStockReturnsText(

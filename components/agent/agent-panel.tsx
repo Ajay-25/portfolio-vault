@@ -483,12 +483,22 @@ export function AgentPanel() {
               break;
             case "done":
               gotDone = true;
-              patchStream({
-                content:   event.reply,
-                toolCalls: event.toolCalls.length ? event.toolCalls : undefined,
-                streaming: false,
-                status:    undefined,
-              });
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === streamId
+                    ? {
+                        ...m,
+                        content:
+                          event.reply?.trim() ||
+                          m.content ||
+                          "Done.",
+                        toolCalls: event.toolCalls.length ? event.toolCalls : undefined,
+                        streaming: false,
+                        status:    undefined,
+                      }
+                    : m,
+                ),
+              );
               if (event.chatId) setActiveChatId((prev) => prev ?? event.chatId);
               if (event.refreshed) router.refresh();
               loadChats();

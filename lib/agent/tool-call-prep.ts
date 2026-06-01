@@ -1,5 +1,6 @@
 import { AGENT_TOOLS } from "@/lib/agent/tools";
 import { coerceToolInput } from "@/lib/agent/coerce-tool-input";
+import { AGENT_SYNTHESIS_PROMPT } from "@/lib/agent/synthesis-fallback";
 
 const KNOWN_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 
@@ -86,10 +87,23 @@ export function prepareToolCalls(
 
 export function buildFailedGenerationNudge(
   messages: Array<{ role: string; content?: unknown }>,
+  textOnly = false,
 ): string {
+  if (textOnly) {
+    return AGENT_SYNTHESIS_PROMPT;
+  }
+
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "tool" || typeof m.content !== "string") continue;
+
+    if (m.content.includes("Stocks (live CMP")) {
+      return [
+        "Write a plain-text reply now — do NOT call any tools.",
+        "List each stock from the tool results with CMP, P&L %, and a suggested HOLD | TRIM | ADD | EXIT with brief rationale.",
+      ].join(" ");
+    }
+
     if (!m.content.includes("Found 1 stock holding")) continue;
 
     const sym = m.content.match(/\[([A-Z0-9][A-Z0-9.-]*)\]/)?.[1];

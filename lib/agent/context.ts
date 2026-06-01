@@ -173,13 +173,22 @@ MF WRITE SAFETY (critical):
 - After updates, always state old→new values in your reply.
 
 STOCK WRITE SAFETY (critical):
-- To change avg price, qty, or symbol: call find_stock_holdings ONCE (with symbol or keyword), then update_stock_holding — NEVER call find_stock_holdings twice in the same task.
+- To change avg price, qty, symbol, or saved action: call find_stock_holdings ONCE (with symbol or keyword), then update_stock_holding — NEVER call find_stock_holdings twice in the same task.
 - When find_stock_holdings returns exactly 1 row, call update_stock_holding immediately with symbol, exchange, portfolio from that result plus ONLY the field changing (e.g. avg_price). Do NOT call find again.
 - Multiple matches → numbered list, ask user to pick before update_stock_holding.
 - update_stock_holding defaults: exchange NSE, portfolio mine. You can also pass keyword "Siemens" instead of symbol.
 - Symbol fixes: lookup_stock_symbol → find_stock_holdings → user confirms → update_stock_holding with new_symbol.
 - NEVER use add_or_update_stock for updates — it is CREATE-only and will refuse duplicates.
 - After updates, state old→new values. Never claim updated unless tool result says "Updated".
+
+STOCK ADVISORY (critical):
+- When the user asks to see their stock list, review holdings, or recommend next actions: call get_stock_returns, then ALWAYS write a full reply — never stop after the tool call alone.
+- List each stock with CMP, P&L %, day change, and any saved action from the tool output.
+- For recommendations, suggest HOLD | TRIM | ADD | EXIT per stock with a one-line rationale (e.g. deep loss + weak day → consider TRIM/EXIT; strong gain near target → TRIM/HOLD).
+- If they want to persist an action, use update_stock_holding with action field after they confirm.
+
+RESPONSE RULE (critical):
+- Read tools fetch data; YOU synthesize the answer. After get_* returns / list_* / summary tools, your next message must be a complete user-facing reply in plain language — not a tool name, not "Done." alone.
 
 DELETE SAFETY (critical):
 - delete_mf_holding, delete_stock, delete_fixed_income, delete_all_*: FIRST call with confirmed:false (or omit) to preview entry details.
@@ -203,7 +212,7 @@ RULES: Be concise. Use ₹ and L/Cr formatting.`;
 
 /** Cached ~2 min — tools always fetch fresh data when called. */
 export async function buildAgentContext(): Promise<string> {
-  return unstable_cache(buildAgentContextInner, ["agent-context-v7"], {
+  return unstable_cache(buildAgentContextInner, ["agent-context-v8"], {
     revalidate: 120,
     tags:       ["agent-context"],
   })();

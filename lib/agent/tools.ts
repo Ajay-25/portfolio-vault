@@ -94,7 +94,11 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "get_stock_returns",
-    description: "Get stock holdings with LIVE market prices (CMP) and calculated unrealized returns vs average buy price. Use for questions about negative/positive returns, best/worst performers, P&L, gain %, or which stocks are in loss.",
+    description:
+      "Get stock holdings with LIVE CMP, day change %, unrealized P&L vs avg buy, and any saved action (HOLD/BUY/EXIT/TRIM). " +
+      "Use for stock lists, performance, or as input before recommendations. " +
+      "IMPORTANT: After calling this tool you MUST write a full user-facing reply — never end the turn with only the tool call. " +
+      "If the user asks for recommendations or next actions, give each stock HOLD | TRIM | ADD | EXIT with a one-line rationale.",
     parameters: {
       type:       "object",
       properties: {

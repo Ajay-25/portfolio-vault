@@ -12,6 +12,11 @@ import {
 import { executeTool } from "@/lib/agent/executor";
 import { buildAgentContext } from "@/lib/agent/context";
 import { resolveModel } from "@/lib/agent/models";
+import {
+  AGENT_SYNTHESIS_PROMPT,
+  fallbackReplyFromToolResults,
+  userWantsAdvisory,
+} from "@/lib/agent/synthesis-fallback";
 import type { AgentStreamEvent, AgentToolCall } from "@/lib/agent/stream-events";
 
 export type { AgentToolCall } from "@/lib/agent/stream-events";
@@ -30,6 +35,21 @@ type HistoryMessage = {
 export const MAX_AGENT_ROUNDS = 12;
 const GROQ_RATE_LIMIT_RETRIES = 5;
 const GROQ_FAILED_GENERATION_RETRIES = 2;
+
+/** Read tools that should be followed by a user-facing summary (not find/lookup intermediates). */
+const TERMINAL_READ_TOOLS = new Set([
+  "get_stock_returns",
+  "get_mf_returns",
+  "get_fixed_income_returns",
+  "get_insurance_investment_returns",
+  "get_investment_returns",
+  "get_portfolio_summary",
+  "get_upcoming_sips",
+  "get_action_items",
+  "get_nav",
+  "list_fi_holdings",
+  "calculate_fi_projection",
+]);
 
 const KNOWN_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 
@@ -191,6 +211,37 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type GroqStream = AsyncIterable<Groq.Chat.Completions.ChatCompletionChunk>;
+
+async function createGroqStream(
+  groq: Groq,
+  modelId: string,
+  messages: Groq.Chat.ChatCompletionMessageParam[],
+  textOnly: boolean,
+): Promise<GroqStream> {
+  if (textOnly) {
+    return groq.chat.completions.create({
+      model:    resolveModel(modelId),
+      messages,
+      stream:   true,
+    }) as Promise<GroqStream>;
+  }
+  return groq.chat.completions.create({
+    model:       resolveModel(modelId),
+    messages,
+    tools:       toGroqTools(),
+    tool_choice: "auto",
+    stream:      true,
+  }) as Promise<GroqStream>;
+}
+
+function tryFallbackReply(
+  toolCalls: AgentToolCall[],
+  userMessage: string,
+): string | null {
+  return fallbackReplyFromToolResults(toolCalls, userWantsAdvisory(userMessage));
+}
+
 export async function* runAgentStream(
   apiKey: string,
   modelId: string,
@@ -212,39 +263,45 @@ export async function* runAgentStream(
   let rounds = 0;
   let wroteData = false;
   let failedGenerationRetries = 0;
+  let synthesisNudges = 0;
+  let forceTextOnly = false;
   const toolCalls: AgentToolCall[] = [];
   let reply = "";
 
   while (rounds < MAX_AGENT_ROUNDS) {
     rounds++;
-    yield { type: "status", message: rounds === 1 ? "Thinking…" : "Continuing…" };
+    yield { type: "status", message: rounds === 1 ? "Thinking…" : forceTextOnly ? "Summarizing…" : "Continuing…" };
 
-    let stream: Awaited<ReturnType<typeof groq.chat.completions.create>> | null = null;
+    let stream: GroqStream | null = null;
     for (let attempt = 0; attempt <= GROQ_RATE_LIMIT_RETRIES; attempt++) {
       try {
-        stream = await groq.chat.completions.create({
-          model:       resolveModel(modelId),
-          messages,
-          tools:       toGroqTools(),
-          tool_choice: "auto",
-          stream:      true,
-        });
+        stream = await createGroqStream(groq, modelId, messages, forceTextOnly);
         break;
       } catch (err) {
         if (
           (isGroqFailedGeneration(err) || isGroqToolValidationError(err)) &&
           failedGenerationRetries < GROQ_FAILED_GENERATION_RETRIES
         ) {
+          const fallback = tryFallbackReply(toolCalls, userMessage);
+          if (fallback) {
+            reply = fallback;
+            yield { type: "text_delta", text: fallback };
+            return { reply, toolCalls, refreshed: wroteData };
+          }
+
           failedGenerationRetries++;
           messages.push({
             role:    "user",
-            content: isGroqToolValidationError(err)
-              ? buildToolValidationNudge()
-              : buildFailedGenerationNudge(messages),
+            content: forceTextOnly
+              ? AGENT_SYNTHESIS_PROMPT
+              : isGroqToolValidationError(err)
+                ? buildToolValidationNudge()
+                : buildFailedGenerationNudge(messages, forceTextOnly),
           });
+          if (forceTextOnly) forceTextOnly = true;
           yield {
             type:    "status",
-            message: "Retrying tool call…",
+            message: forceTextOnly ? "Summarizing…" : "Retrying tool call…",
           };
           stream = null;
           break;
@@ -304,17 +361,24 @@ export async function* runAgentStream(
       .filter((tc): tc is GroqFunctionCall => tc != null);
 
     if (finishReason === "failed_generation") {
+      const fallback = tryFallbackReply(toolCalls, userMessage);
+      if (fallback) {
+        reply = fallback;
+        yield { type: "text_delta", text: fallback };
+        return { reply, toolCalls, refreshed: wroteData };
+      }
+
       if (failedGenerationRetries < GROQ_FAILED_GENERATION_RETRIES) {
         failedGenerationRetries++;
         messages.push({
           role:    "user",
-          content: buildFailedGenerationNudge(messages),
+          content: buildFailedGenerationNudge(messages, forceTextOnly),
         });
-        yield { type: "status", message: "Retrying tool call…" };
+        yield { type: "status", message: forceTextOnly ? "Summarizing…" : "Retrying tool call…" };
         continue;
       }
       throw new Error(
-        "Groq could not generate a valid tool call. Try: \"Update SIEMENS avg price to 2823.95 on NSE in mine portfolio\".",
+        "Groq could not generate a valid response. Try again or switch to Llama 3.3 70B Versatile in the model picker.",
       );
     }
 
@@ -324,9 +388,32 @@ export async function* runAgentStream(
           || "Tool call failed — the model returned an invalid tool format. Please try again; for Excel imports use bulk_add_stocks in one shot.";
         return { reply, toolCalls, refreshed: wroteData };
       }
+
       reply = roundText.trim() || "Done.";
+
+      if (
+        reply.length < 40 &&
+        toolCalls.length > 0 &&
+        synthesisNudges < 2
+      ) {
+        const fallback = tryFallbackReply(toolCalls, userMessage);
+        if (fallback) {
+          reply = fallback;
+          yield { type: "text_delta", text: fallback };
+          return { reply, toolCalls, refreshed: wroteData };
+        }
+        synthesisNudges++;
+        forceTextOnly = true;
+        messages.push({ role: "user", content: AGENT_SYNTHESIS_PROMPT });
+        yield { type: "status", message: "Summarizing…" };
+        continue;
+      }
+
+      forceTextOnly = false;
       return { reply, toolCalls, refreshed: wroteData };
     }
+
+    forceTextOnly = false;
 
     const sanitizedToolCalls = prepareToolCalls(messageToolCalls);
 
@@ -353,6 +440,22 @@ export async function* runAgentStream(
         content:      result,
       });
     }
+
+    const toolNames = sanitizedToolCalls.map((c) => c.function.name);
+    const allTerminalRead = toolNames.every((n) => TERMINAL_READ_TOOLS.has(n));
+    if (allTerminalRead && synthesisNudges < 2) {
+      synthesisNudges++;
+      forceTextOnly = true;
+      messages.push({ role: "user", content: AGENT_SYNTHESIS_PROMPT });
+      yield { type: "status", message: "Summarizing…" };
+    }
+  }
+
+  const fallback = tryFallbackReply(toolCalls, userMessage);
+  if (fallback) {
+    reply = fallback;
+    yield { type: "text_delta", text: fallback };
+    return { reply, toolCalls, refreshed: wroteData };
   }
 
   reply = "I couldn't complete that request in time. Some actions may have partially applied — check your portfolio or try again.";
