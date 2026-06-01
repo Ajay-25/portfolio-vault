@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) return jsonError("Unauthorized", 401);
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return jsonError("GEMINI_API_KEY not configured", 503);
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return jsonError("GROQ_API_KEY not configured", 503);
 
   const body = await req.json();
   const { message, chatId, model, attachments: rawAttachments } = body;

@@ -31,16 +31,44 @@ import {
   formatFindMfHoldingsText,
   patchMfHolding,
 } from "@/lib/agent/mf-holding-ops";
+import {
+  buildStockPatchFromInput,
+  createStockHolding,
+  findStockHoldings,
+  formatFindStockHoldingsText,
+  formatStockHoldingLine,
+  patchStockHolding,
+} from "@/lib/agent/stock-holding-ops";
+import {
+  formatStockSymbolLookupText,
+  lookupStockSymbols,
+} from "@/lib/apis/stock-symbol-lookup";
+import {
+  findFixedIncomeHoldings,
+  formatFindFixedIncomeText,
+  formatFixedIncomeHoldingLine,
+  formatFixedIncomeOptionsList,
+  patchFixedIncomeHolding,
+  resolveFixedIncomeTarget,
+} from "@/lib/agent/fixed-income-holding-ops";
+import { coerceToolInput, parseOptionalNumber } from "@/lib/agent/coerce-tool-input";
+import { confirmationRequired, isDeleteConfirmed } from "@/lib/agent/delete-confirmation";
+import {
+  normalizeExchange,
+  normalizePortfolioKey,
+  normalizePortfolioScope,
+  optionalExchange,
+} from "@/lib/agent/normalize-input";
 import type { PortfolioKey } from "@/lib/agent/portfolio-scope";
 
 type ToolResult = string;
 
 function portfolioId(input: Record<string, unknown>): string {
-  return PORTFOLIO_IDS[input.portfolio as keyof typeof PORTFOLIO_IDS];
+  return PORTFOLIO_IDS[portfolioKey(input)];
 }
 
 function portfolioKey(input: Record<string, unknown>): PortfolioKey {
-  return (input.portfolio as PortfolioKey) ?? "mine";
+  return normalizePortfolioKey(input.portfolio);
 }
 
 async function resolveMfCodesForAdd(input: Record<string, unknown>): Promise<
@@ -77,6 +105,7 @@ export async function executeTool(
   name: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
+  input = coerceToolInput(input);
   try {
     switch (name) {
       case "get_mf_returns": {
@@ -92,6 +121,66 @@ export async function executeTool(
         const type = input.type as string | undefined;
         const rows = await fetchFixedIncomeReturns({ portfolio, filter, type });
         return formatFixedIncomeReturnsText(rows, filter);
+      }
+
+      case "find_fixed_income_holdings": {
+        const portfolio = normalizePortfolioScope(input.portfolio);
+        const type = input.type as string | undefined;
+        const label = input.label as string | undefined;
+        const keyword = input.keyword as string | undefined;
+        if (!type?.trim() && !label?.trim() && !keyword?.trim()) {
+          return "Provide type, label, or keyword to search fixed income holdings.";
+        }
+        const rows = await findFixedIncomeHoldings({ portfolio, type, label, keyword });
+        return formatFindFixedIncomeText(rows, { portfolio, type, label, keyword });
+      }
+
+      case "update_fixed_income": {
+        const principal = parseOptionalNumber(input.principal);
+        const rate = parseOptionalNumber(input.rate);
+        const newLabel = input.new_label as string | undefined;
+        return patchFixedIncomeHolding({
+          portfolio: portfolioKey(input),
+          type:      input.type as string | undefined,
+          label:     input.label as string | undefined,
+          keyword:   input.keyword as string | undefined,
+          patch:     {
+            ...(principal !== undefined ? { principal } : {}),
+            ...(rate !== undefined ? { rate } : {}),
+            ...(newLabel?.trim() ? { label: newLabel.trim() } : {}),
+            ...(input.issuer !== undefined ? { issuer: (input.issuer as string) || null } : {}),
+            ...(input.notes !== undefined ? { notes: (input.notes as string) || null } : {}),
+          },
+        });
+      }
+
+      case "delete_fixed_income": {
+        const portfolio = portfolioKey(input);
+        const type = input.type as string | undefined;
+        const label = input.label as string | undefined;
+        const keyword = input.keyword as string | undefined;
+
+        if (!type?.trim() && !label?.trim() && !keyword?.trim()) {
+          return "Provide type, label, or keyword to identify the fixed income holding. Call find_fixed_income_holdings first.";
+        }
+
+        const resolved = await resolveFixedIncomeTarget({ portfolio, type, label, keyword });
+        if ("error" in resolved) {
+          const opts = resolved.options.length
+            ? `\n${formatFixedIncomeOptionsList(resolved.options)}`
+            : "";
+          return resolved.error + opts;
+        }
+
+        const row = resolved.holding;
+        const preview = formatFixedIncomeHoldingLine(row).trim();
+
+        if (!isDeleteConfirmed(input)) {
+          return confirmationRequired("Remove this fixed income holding?", [preview]);
+        }
+
+        await prisma.fixedIncomeHolding.delete({ where: { id: row.id } });
+        return `Deleted [${row.type}] ${row.label} from ${portfolio} portfolio (₹${(row.principal / 100000).toFixed(2)}L principal removed).`;
       }
 
       case "get_insurance_investment_returns": {
@@ -364,16 +453,24 @@ export async function executeTool(
 
       case "delete_mf_holding": {
         const pid = portfolioId(input);
+        const portfolio = portfolioKey(input);
+        const schemeCode = input.scheme_code as string;
         const holding = await prisma.mFHolding.findFirst({
-          where: { portfolioId: pid, schemeCode: input.scheme_code as string },
+          where: { portfolioId: pid, schemeCode },
         });
-        if (!holding) return `Holding not found: ${input.scheme_code}`;
+        if (!holding) return `Holding not found: ${schemeCode}`;
+
+        const label = `${formatMFSchemeName(holding.schemeName)} [${holding.schemeCode}] — ${holding.units} units · avg ₹${holding.avgNAV ?? "—"} · ${portfolio} portfolio`;
+        if (!isDeleteConfirmed(input)) {
+          return confirmationRequired("Delete this MF holding?", [label]);
+        }
+
         await prisma.mFHolding.delete({ where: { id: holding.id } });
-        return `Deleted ${formatMFSchemeName(holding.schemeName)} from ${input.portfolio} portfolio.`;
+        return `Deleted ${formatMFSchemeName(holding.schemeName)} [${holding.schemeCode}] from ${portfolio} portfolio.`;
       }
 
       case "delete_all_mf_holdings": {
-        const scope = (input.portfolio as "mine" | "mother" | "both") ?? "mine";
+        const scope = normalizePortfolioScope(input.portfolio, "mine");
         const ids = portfolioIds(scope);
         const holdings = await prisma.mFHolding.findMany({
           where:   { portfolioId: { in: ids } },
@@ -382,55 +479,180 @@ export async function executeTool(
         if (!holdings.length) {
           return `No MF holdings found in ${scope === "both" ? "either portfolio" : scope + " portfolio"}.`;
         }
+
+        const preview = holdings
+          .slice(0, 10)
+          .map((h) => `  • [${h.schemeCode}] ${formatMFSchemeName(h.schemeName)} (${h.portfolio.name}) — ${h.units} units`);
+
+        if (!isDeleteConfirmed(input)) {
+          return confirmationRequired(
+            `Delete ALL ${holdings.length} MF holding(s) from ${scope}?`,
+            preview,
+          );
+        }
+
         const { count } = await prisma.mFHolding.deleteMany({
           where: { portfolioId: { in: ids } },
         });
-        const preview = holdings
-          .slice(0, 8)
-          .map((h) => `${formatMFSchemeName(h.schemeName)} (${h.portfolio.name})`)
-          .join("; ");
-        const extra = count > 8 ? ` …and ${count - 8} more` : "";
-        return `Deleted ${count} MF holding(s) from ${scope}: ${preview}${extra}.`;
+        const extra = count > 10 ? ` …and ${count - 10} more` : "";
+        return `Deleted ${count} MF holding(s) from ${scope}.${extra ? `\n${preview.join("\n")}${extra}` : ""}`;
+      }
+
+      case "lookup_stock_symbol": {
+        const query = input.query as string | undefined;
+        const name = input.name as string | undefined;
+        if (!query?.trim() && !name?.trim()) {
+          return "Provide query (symbol/abbreviation) or name (company name) to look up.";
+        }
+        const exchange = normalizeExchange(input.exchange);
+        const limit = typeof input.limit === "number" ? input.limit : 5;
+        const matches = await lookupStockSymbols({ query, name, exchange, limit });
+        return formatStockSymbolLookupText(matches, { query, name, exchange });
+      }
+
+      case "find_stock_holdings": {
+        const portfolio = normalizePortfolioScope(input.portfolio);
+        const symbol = input.symbol as string | undefined;
+        const keyword = input.keyword as string | undefined;
+        const exchange = optionalExchange(input.exchange);
+        if (!symbol?.trim() && !keyword?.trim()) {
+          return "Skipped — symbol or keyword required. If find_stock_holdings already returned a match, call update_stock_holding with that symbol instead.";
+        }
+        const rows = await findStockHoldings({ portfolio, symbol, keyword, exchange });
+        return formatFindStockHoldingsText(rows, { portfolio, symbol, keyword, exchange });
+      }
+
+      case "update_stock_holding": {
+        return patchStockHolding({
+          portfolio: portfolioKey(input),
+          symbol:    input.symbol as string | undefined,
+          keyword:   input.keyword as string | undefined,
+          exchange:  normalizeExchange(input.exchange),
+          patch:     buildStockPatchFromInput(input),
+        });
+      }
+
+      case "bulk_add_stocks": {
+        const portfolio = portfolioKey(input);
+        const pid = portfolioId(input);
+        const rows = input.holdings as Array<{
+          symbol?:       string;
+          display_name?: string;
+          exchange?:     string;
+          qty?:          number;
+          avg_price?:    number;
+          action?:       string;
+        }> | undefined;
+
+        if (!Array.isArray(rows) || rows.length === 0) {
+          return "No stock holdings provided.";
+        }
+
+        const results: string[] = [];
+        let saved = 0;
+        let failed = 0;
+
+        for (const row of rows) {
+          if (!row?.symbol?.trim()) {
+            failed++;
+            results.push("✗ skipped row — symbol required");
+            continue;
+          }
+          if (typeof row.qty !== "number" || typeof row.avg_price !== "number") {
+            failed++;
+            results.push(`✗ ${row.symbol}: qty and avg_price required`);
+            continue;
+          }
+
+          const symbol = row.symbol.trim().toUpperCase();
+          const exchange = normalizeExchange(row.exchange);
+          const data = {
+            portfolioId: pid,
+            symbol,
+            displayName: row.display_name?.trim() || null,
+            exchange,
+            currency:    exchange === "NSE" ? "INR" : "USD",
+            qty:         row.qty,
+            avgPrice:    row.avg_price,
+            action:      row.action?.trim() || null,
+          };
+
+          try {
+            await prisma.stockHolding.upsert({
+              where: {
+                portfolioId_symbol_exchange: { portfolioId: pid, symbol, exchange },
+              },
+              update: { qty: data.qty, avgPrice: data.avgPrice, action: data.action, displayName: data.displayName ?? undefined },
+              create: data,
+            });
+            saved++;
+            results.push(
+              `✓ ${data.displayName ?? symbol} (${exchange}): ${data.qty} @ ${data.currency === "USD" ? "$" : "₹"}${data.avgPrice}`,
+            );
+          } catch (err) {
+            failed++;
+            results.push(`✗ ${symbol}: ${err instanceof Error ? err.message : "save failed"}`);
+          }
+        }
+
+        return `Stock import to ${portfolio}: ${saved} saved, ${failed} failed.\n${results.join("\n")}`;
       }
 
       case "add_or_update_stock": {
-        const pid = portfolioId(input);
-        const symbol = (input.symbol as string).toUpperCase();
-        const exchange = input.exchange as string;
-        const data = {
-          portfolioId: pid,
-          symbol,
-          displayName: (input.display_name as string | undefined) ?? null,
-          exchange,
-          currency:    exchange === "NSE" ? "INR" : "USD",
-          qty:         input.qty as number,
-          avgPrice:    input.avg_price as number,
-          action:      (input.action as string | undefined) ?? null,
-        };
-        await prisma.stockHolding.upsert({
-          where: {
-            portfolioId_symbol_exchange: { portfolioId: pid, symbol, exchange },
-          },
-          update: { qty: data.qty, avgPrice: data.avgPrice, action: data.action },
-          create: data,
+        const qty = parseOptionalNumber(input.qty);
+        const avg = parseOptionalNumber(input.avg_price);
+        if (qty === undefined || avg === undefined) {
+          return "qty and avg_price are required numbers for new stock holdings.";
+        }
+        return createStockHolding({
+          portfolio:    portfolioKey(input),
+          symbol:       input.symbol as string,
+          exchange:     normalizeExchange(input.exchange),
+          qty,
+          avg_price:    avg,
+          display_name: input.display_name as string | undefined,
+          action:       input.action as string | undefined,
         });
-        return `${data.displayName ?? data.symbol} (${data.exchange}): ${data.qty} shares @ ${data.currency === "USD" ? "$" : "₹"}${data.avgPrice} saved to ${input.portfolio} portfolio.`;
       }
 
       case "delete_stock": {
         const pid = portfolioId(input);
+        const portfolio = portfolioKey(input);
         const symbol = (input.symbol as string).toUpperCase();
-        const exchange = input.exchange as string;
+        const exchange = normalizeExchange(input.exchange);
         const stock = await prisma.stockHolding.findFirst({
-          where: { portfolioId: pid, symbol, exchange },
+          where: {
+            portfolioId: pid,
+            exchange,
+            symbol:      { equals: symbol, mode: "insensitive" },
+          },
+          include: { portfolio: { select: { id: true, name: true } } },
         });
         if (!stock) return `Stock not found: ${symbol} on ${exchange}`;
+
+        const match = formatStockHoldingLine({
+          id:            stock.id,
+          symbol:        stock.symbol,
+          displayName:   stock.displayName,
+          exchange:      stock.exchange,
+          currency:      stock.currency,
+          portfolio:     portfolio,
+          portfolioName: stock.portfolio.name,
+          qty:           stock.qty,
+          avgPrice:      stock.avgPrice,
+          action:        stock.action,
+        }).trim();
+
+        if (!isDeleteConfirmed(input)) {
+          return confirmationRequired("Delete this stock holding?", [match]);
+        }
+
         await prisma.stockHolding.delete({ where: { id: stock.id } });
-        return `Deleted ${stock.displayName ?? stock.symbol} from ${input.portfolio} portfolio.`;
+        return `Deleted ${stock.displayName ?? stock.symbol} [${stock.symbol}] from ${portfolio} portfolio.`;
       }
 
       case "delete_all_stocks": {
-        const scope = (input.portfolio as "mine" | "mother" | "both") ?? "mine";
+        const scope = normalizePortfolioScope(input.portfolio, "mine");
         const ids = portfolioIds(scope);
         const stocks = await prisma.stockHolding.findMany({
           where:   { portfolioId: { in: ids } },
@@ -439,15 +661,22 @@ export async function executeTool(
         if (!stocks.length) {
           return `No stock holdings found in ${scope === "both" ? "either portfolio" : scope + " portfolio"}.`;
         }
+
+        const preview = stocks.slice(0, 10).map((s) =>
+          `  • [${s.symbol}] ${s.displayName ?? s.symbol} (${s.portfolio.name}) — ${s.qty} @ ₹${s.avgPrice}`,
+        );
+
+        if (!isDeleteConfirmed(input)) {
+          return confirmationRequired(
+            `Delete ALL ${stocks.length} stock holding(s) from ${scope}?`,
+            preview,
+          );
+        }
+
         const { count } = await prisma.stockHolding.deleteMany({
           where: { portfolioId: { in: ids } },
         });
-        const preview = stocks
-          .slice(0, 8)
-          .map((s) => `${s.displayName ?? s.symbol} (${s.portfolio.name})`)
-          .join("; ");
-        const extra = count > 8 ? ` …and ${count - 8} more` : "";
-        return `Deleted ${count} stock holding(s) from ${scope}: ${preview}${extra}.`;
+        return `Deleted ${count} stock holding(s) from ${scope}.`;
       }
 
       case "add_action_item": {

@@ -131,7 +131,7 @@ export async function getAlertsPageData(): Promise<AlertsPageData> {
   const shriramHolding = holdings.find((h) => h.symbol === SHRIRAM_CONFIG.symbol);
 
   const priceResults = await Promise.all(
-    holdings.map((h) => fetchStockPrice(h.symbol, h.exchange)),
+    holdings.map((h) => fetchStockPrice(h.symbol, h.exchange, h.displayName)),
   );
 
   const shriramPrice = priceResults.find(

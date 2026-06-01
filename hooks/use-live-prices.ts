@@ -18,7 +18,7 @@ export type LivePrice = {
 export type PriceMap = Record<string, LivePrice>; // key = "SYMBOL:EXCHANGE"
 
 export function useLivePrices(
-  holdings: Array<{ symbol: string; exchange: string }>,
+  holdings: Array<{ symbol: string; exchange: string; displayName?: string | null }>,
   refreshIntervalMs = 5 * 60 * 1000, // refresh every 5 min
 ) {
   const [prices, setPrices]   = useState<PriceMap>({});
@@ -33,7 +33,7 @@ export function useLivePrices(
 
     const results = await Promise.allSettled(
       holdings.map((h) =>
-        fetch(`/api/market/stock?${stockPriceQuery(h.symbol, h.exchange)}`)
+        fetch(`/api/market/stock?${stockPriceQuery(h.symbol, h.exchange, h.displayName)}`)
           .then((r) => r.json())
           .then((data) => ({
             key:       `${h.symbol}:${h.exchange}`,

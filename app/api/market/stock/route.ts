@@ -12,8 +12,9 @@ export async function GET(req: NextRequest) {
   }
 
   const symbol = decodeURIComponent(rawSymbol).trim();
+  const displayName = searchParams.get("name")?.trim() || null;
 
-  const data = await fetchStockPrice(symbol, exchange);
+  const data = await fetchStockPrice(symbol, exchange, displayName);
 
   if (!data) {
     return NextResponse.json({ error: "Price not found" }, { status: 404 });

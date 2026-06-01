@@ -6,7 +6,8 @@
 
 import yahooFinance from "yahoo-finance2";
 import { prisma } from "@/lib/prisma";
-import { yahooTickersForStock } from "@/lib/utils/stock-ticker";
+import { searchNseYahooBase } from "@/lib/apis/yahoo-symbol-search";
+import { lookupAlias, yahooTickersForStock } from "@/lib/utils/stock-ticker";
 
 const PRICE_TTL_MS  = 5 * 60 * 1000;  // 5 minutes
 const FX_TTL_MS     = 10 * 60 * 1000; // 10 minutes
@@ -120,8 +121,9 @@ export type StockPrice = {
  * For NYSE/NASDAQ stocks, uses symbol as-is (e.g. "NVDA")
  */
 export async function fetchStockPrice(
-  symbol:   string,
-  exchange: string
+  symbol:      string,
+  exchange:    string,
+  displayName?: string | null,
 ): Promise<StockPrice | null> {
   // Check cache
   const cached = await prisma.priceCache.findUnique({
@@ -131,7 +133,19 @@ export async function fetchStockPrice(
     return { symbol, exchange, price: cached.price, changePct: cached.changePct, currency: cached.currency };
   }
 
-  const tickers = yahooTickersForStock(symbol, exchange);
+  const searchBases: string[] = [];
+  if (exchange === "NSE") {
+    if (!lookupAlias(symbol)) {
+      const fromSymbol = await searchNseYahooBase(symbol);
+      if (fromSymbol) searchBases.push(fromSymbol);
+    }
+    if (displayName?.trim()) {
+      const fromName = await searchNseYahooBase(displayName);
+      if (fromName) searchBases.push(fromName);
+    }
+  }
+
+  const tickers = yahooTickersForStock(symbol, exchange, searchBases);
   const defaultCurrency = exchange === "NSE" ? "INR" : "USD";
 
   for (const ticker of tickers) {

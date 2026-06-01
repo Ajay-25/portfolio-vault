@@ -60,7 +60,7 @@ export async function fetchStockReturns(options: {
   if (!holdings.length) return [];
 
   const prices = await Promise.all(
-    holdings.map((h) => fetchStockPrice(h.symbol, h.exchange)),
+    holdings.map((h) => fetchStockPrice(h.symbol, h.exchange, h.displayName)),
   );
 
   const rows: StockReturnRow[] = holdings.map((h, i) => {

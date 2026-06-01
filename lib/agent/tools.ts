@@ -1,5 +1,10 @@
-import type { FunctionDeclaration } from "@google/generative-ai";
 import { MF_CATEGORY_HINT } from "@/lib/utils/mf-category";
+
+export type AgentToolDefinition = {
+  name:        string;
+  description: string;
+  parameters:  Record<string, unknown>;
+};
 
 export const AGENT_TOOLS = [
   {
@@ -108,7 +113,7 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "get_portfolio_summary",
-    description: "Get a summary of a portfolio including total value, MF value, stock value, and monthly SIP amount. Use this to answer questions about portfolio performance.",
+    description: "READ-ONLY summary of portfolio totals (MF + stocks + fixed income + insurance). Does NOT modify data. To remove or edit fixed income use delete_fixed_income / update_fixed_income. To edit stocks/MF use update_stock_holding / update_mf_holding.",
     parameters: {
       type:       "object",
       properties: {
@@ -315,19 +320,23 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "delete_mf_holding",
-    description: "Delete a single mutual fund holding by scheme code. For deleting ALL MF holdings at once, use delete_all_mf_holdings instead. Only call after explicit user confirmation.",
+    description: "Delete a single MF holding. First call WITHOUT confirmed:true to show details and ask user; call again with confirmed:true only after explicit user approval.",
     parameters: {
       type:       "object",
       properties: {
         scheme_code: { type: "string" },
         portfolio:   { type: "string", enum: ["mine", "mother"] },
+        confirmed:   {
+          type:        "boolean",
+          description: "Must be true only after user explicitly confirms deletion",
+        },
       },
       required: ["scheme_code", "portfolio"],
     },
   },
   {
     name:        "delete_all_mf_holdings",
-    description: "Delete ALL mutual fund holdings in one portfolio (or both). Use when user asks to remove/clear all MF holdings. Only call after explicit confirmation — list what will be deleted first unless user already said delete all/clear all.",
+    description: "Delete ALL MF holdings in a portfolio. First call WITHOUT confirmed:true to preview list; call again with confirmed:true only after explicit user approval.",
     parameters: {
       type:       "object",
       properties: {
@@ -336,13 +345,136 @@ export const AGENT_TOOLS = [
           enum:        ["mine", "mother", "both"],
           description: "Which portfolio(s) to clear",
         },
+        confirmed: {
+          type:        "boolean",
+          description: "Must be true only after user explicitly confirms",
+        },
       },
       required: ["portfolio"],
     },
   },
   {
+    name:        "lookup_stock_symbol",
+    description: "Search NSE/NYSE ticker from company name or wrong/abbreviated symbol. Use when live CMP fails (price not found) or before fixing a holding's symbol. Returns candidates with live price verification — confirm with user before update_stock_holding.",
+    parameters: {
+      type:       "object",
+      properties: {
+        query: {
+          type:        "string",
+          description: "Wrong symbol or abbreviation e.g. BHARAT ELECTRONICS, HINDAERONAUTICS, NIPIND",
+        },
+        name: {
+          type:        "string",
+          description: "Full company name e.g. Bharat Electronics Limited",
+        },
+        exchange: {
+          type:        "string",
+          enum:        ["NSE", "NYSE"],
+          description: "Default NSE for Indian stocks",
+        },
+        limit: {
+          type:        "number",
+          description: "Max matches to return (default 5)",
+        },
+      },
+    },
+  },
+  {
+    name:        "find_stock_holdings",
+    description: "Search stock holdings by symbol or company keyword. REQUIRED: pass symbol OR keyword — never call with empty args. Call ONCE before update_stock_holding; if it returns exactly 1 row, go straight to update_stock_holding — do not call find again.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Default both",
+        },
+        symbol: {
+          type:        "string",
+          description: "Exact stored symbol (case-insensitive) e.g. SIEMENS",
+        },
+        keyword: {
+          type:        "string",
+          description: "Partial symbol or display name e.g. siemens, bharat",
+        },
+        exchange: {
+          type:        "string",
+          enum:        ["NSE", "NYSE"],
+          description: "Optional — omit to search both exchanges; use NSE or NYSE (case-insensitive)",
+        },
+      },
+    },
+  },
+  {
+    name:        "update_stock_holding",
+    description: "Patch an EXISTING stock (avg price, qty, symbol). Use symbol OR keyword to identify the row. Defaults: exchange NSE, portfolio mine. Pass ONLY fields being changed. After find_stock_holdings returns 1 match, call this immediately — never call find_stock_holdings again in the same task.",
+    parameters: {
+      type:       "object",
+      properties: {
+        symbol: {
+          type:        "string",
+          description: "Exact symbol from find_stock_holdings e.g. SIEMENS",
+        },
+        keyword: {
+          type:        "string",
+          description: "Company name e.g. Siemens — use when symbol uncertain",
+        },
+        exchange: {
+          type:        "string",
+          enum:        ["NSE", "NYSE"],
+          description: "Default NSE for Indian stocks",
+        },
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother"],
+          description: "Default mine unless user said mother/mom",
+        },
+        new_symbol: {
+          type:        "string",
+          description: "Correct NSE/NYSE ticker (only when fixing symbol)",
+        },
+        avg_price:  { type: "string", description: "New average buy price (numeric value)" },
+        qty:        { type: "string", description: "New share quantity (numeric value)" },
+        display_name: { type: "string", description: "Company name (only if changing)" },
+        action:       { type: "string", description: "Note e.g. HOLD (only if changing)" },
+      },
+    },
+  },
+  {
+    name:        "bulk_add_stocks",
+    description: "Import many stock holdings from Excel/CSV in ONE call. Always use this for spreadsheet stock sync — never call add_or_update_stock once per row.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother"],
+          description: "Target portfolio",
+        },
+        holdings: {
+          type:        "array",
+          description: "Stock rows from spreadsheet",
+          items: {
+            type:       "object",
+            properties: {
+              symbol:       { type: "string", description: "Ticker e.g. RELIANCE, ADANIGREEN" },
+              display_name: { type: "string", description: "Company name from spreadsheet" },
+              exchange:     { type: "string", enum: ["NSE", "NYSE"], description: "Default NSE for Indian stocks" },
+              qty:          { type: "number", description: "Share quantity" },
+              avg_price:    { type: "number", description: "Average buy price in local currency" },
+              action:       { type: "string", description: "Optional note e.g. HOLD" },
+            },
+            required: ["symbol", "qty", "avg_price"],
+          },
+        },
+      },
+      required: ["portfolio", "holdings"],
+    },
+  },
+  {
     name:        "add_or_update_stock",
-    description: "Add a new stock holding or update quantity/price for an existing one.",
+    description: "CREATE a new stock holding ONLY — fails if symbol already exists. For avg price / qty changes on existing stocks use update_stock_holding. Call find_stock_holdings first to avoid duplicates.",
     parameters: {
       type:       "object",
       properties: {
@@ -358,21 +490,86 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name:        "find_fixed_income_holdings",
+    description: "Search fixed income holdings (PPF, EPF, NPS, FD, liquid, etc.) by type or label keyword. Call BEFORE delete_fixed_income or update_fixed_income. Never call with empty args.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Default both",
+        },
+        type: {
+          type:        "string",
+          description: "Exact type: ppf, epf, nps, fd, bond, liquid, sweep_fd",
+        },
+        label: {
+          type:        "string",
+          description: "Label search e.g. Liquid / Arbitrage",
+        },
+        keyword: {
+          type:        "string",
+          description: "Partial match on label, type, or issuer",
+        },
+      },
+    },
+  },
+  {
+    name:        "update_fixed_income",
+    description: "Patch an EXISTING fixed income holding (principal, rate, label). Call find_fixed_income_holdings first. Pass ONLY fields being changed.",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: { type: "string", enum: ["mine", "mother"], description: "Default mine" },
+        type:      { type: "string", description: "Holding type e.g. liquid, ppf" },
+        label:     { type: "string", description: "Exact or partial label from find result" },
+        keyword:   { type: "string", description: "Search label/type if label unknown" },
+        principal: { type: "string", description: "New principal amount (numeric value)" },
+        rate:      { type: "string", description: "New rate % p.a. (numeric value)" },
+        new_label: { type: "string", description: "Rename holding" },
+        issuer:    { type: "string" },
+        notes:     { type: "string" },
+      },
+    },
+  },
+  {
+    name:        "delete_fixed_income",
+    description: "Remove a fixed income holding (e.g. duplicate liquid counted in MF). First call WITHOUT confirmed to preview; call again with confirmed:\"true\" after user confirms. Use FLAT JSON string fields only — e.g. {\"type\":\"liquid\",\"label\":\"Liquid / Arbitrage\",\"portfolio\":\"mine\",\"confirmed\":\"true\"}",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: { type: "string", enum: ["mine", "mother"], description: "Default mine" },
+        type:      { type: "string", description: "Type e.g. liquid" },
+        label:     { type: "string", description: "Label e.g. Liquid / Arbitrage" },
+        keyword:   { type: "string", description: "Search if type/label uncertain" },
+        confirmed: {
+          type:        "boolean",
+          description: "Must be true only after user explicitly confirms",
+        },
+      },
+    },
+  },
+  {
     name:        "delete_stock",
-    description: "Delete a single stock holding. For deleting ALL stocks at once, use delete_all_stocks instead. Only call after explicit confirmation from the user.",
+    description: "Delete a single stock. First call WITHOUT confirmed:true to show holding details; call again with confirmed:true only after explicit user approval.",
     parameters: {
       type:       "object",
       properties: {
         symbol:    { type: "string" },
         exchange:  { type: "string", enum: ["NSE", "NYSE"] },
         portfolio: { type: "string", enum: ["mine", "mother"] },
+        confirmed: {
+          type:        "boolean",
+          description: "Must be true only after user explicitly confirms",
+        },
       },
       required: ["symbol", "exchange", "portfolio"],
     },
   },
   {
     name:        "delete_all_stocks",
-    description: "Delete ALL stock holdings in one portfolio (or both). Use when user asks to remove/clear all stocks. Only call after explicit confirmation.",
+    description: "Delete ALL stocks in a portfolio. First call WITHOUT confirmed:true to preview; call again with confirmed:true only after explicit user approval.",
     parameters: {
       type:       "object",
       properties: {
@@ -380,6 +577,10 @@ export const AGENT_TOOLS = [
           type:        "string",
           enum:        ["mine", "mother", "both"],
           description: "Which portfolio(s) to clear",
+        },
+        confirmed: {
+          type:        "boolean",
+          description: "Must be true only after user explicitly confirms",
         },
       },
       required: ["portfolio"],
@@ -442,18 +643,23 @@ export const AGENT_TOOLS = [
       required: ["policy_keyword", "new_value", "portfolio"],
     },
   },
-] as FunctionDeclaration[];
+] as AgentToolDefinition[];
 
 export const WRITE_TOOLS = new Set([
   "update_mf_units",
   "update_mf_holding",
   "add_mf_holding",
   "bulk_add_mf_holdings",
+  "bulk_add_stocks",
+  "update_stock_holding",
   "delete_mf_holding",
   "delete_all_mf_holdings",
   "add_or_update_stock",
   "delete_stock",
   "delete_all_stocks",
+  "find_fixed_income_holdings",
+  "update_fixed_income",
+  "delete_fixed_income",
   "add_action_item",
   "complete_action_item",
   "log_snapshot",

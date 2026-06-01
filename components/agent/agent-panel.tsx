@@ -3,10 +3,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
-  DEFAULT_GEMINI_MODEL,
+  DEFAULT_AGENT_MODEL,
   TOKEN_TIER_STYLES,
   getModelGuide,
-  type GeminiModelOption,
+  isKnownModel,
+  resolveModel,
+  type AgentModelOption,
   type TokenUsageTier,
 } from "@/lib/agent/models";
 import type { AgentStreamEvent } from "@/lib/agent/stream-events";
@@ -103,8 +105,9 @@ function formatWhen(iso: string): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-function modelLabel(models: GeminiModelOption[], id: string): string {
-  return models.find((m) => m.id === id)?.label ?? id;
+function modelLabel(models: AgentModelOption[], id: string): string {
+  const resolved = resolveModel(id);
+  return models.find((m) => m.id === resolved)?.label ?? getModelGuide(resolved).label;
 }
 
 function UsageBadge({ tier, label }: { tier: TokenUsageTier; label: string }) {
@@ -119,7 +122,7 @@ function UsageBadge({ tier, label }: { tier: TokenUsageTier; label: string }) {
   );
 }
 
-function ModelOptionDetails({ m, compact }: { m: GeminiModelOption; compact?: boolean }) {
+function ModelOptionDetails({ m, compact }: { m: AgentModelOption; compact?: boolean }) {
   return (
     <>
       <div
@@ -184,8 +187,8 @@ export function AgentPanel() {
   const [messages, setMessages]       = useState<Message[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chats, setChats]             = useState<ChatSummary[]>([]);
-  const [models, setModels]           = useState<GeminiModelOption[]>([]);
-  const [model, setModel]             = useState(DEFAULT_GEMINI_MODEL);
+  const [models, setModels]           = useState<AgentModelOption[]>([]);
+  const [model, setModel]             = useState(DEFAULT_AGENT_MODEL);
   const [modelOpen, setModelOpen]     = useState(false);
   const [input, setInput]             = useState("");
   const [loading, setLoading]         = useState(false);
@@ -208,7 +211,19 @@ export function AgentPanel() {
       const res = await fetch("/api/agent/models");
       if (res.ok) {
         const data = await res.json();
-        setModels(data.models ?? []);
+        const loaded: AgentModelOption[] = data.models ?? [];
+        setModels(loaded);
+        setModel((current) => {
+          const resolved = resolveModel(current);
+          if (loaded.length > 0 && !isKnownModel(resolved, loaded)) {
+            localStorage.setItem(MODEL_STORAGE_KEY, DEFAULT_AGENT_MODEL);
+            return DEFAULT_AGENT_MODEL;
+          }
+          if (resolved !== current) {
+            localStorage.setItem(MODEL_STORAGE_KEY, resolved);
+          }
+          return resolved;
+        });
       }
     } catch {
       /* keep fallback label from model id */
@@ -243,7 +258,7 @@ export function AgentPanel() {
       if (!res.ok) return;
       const data = await res.json();
       setActiveChatId(data.id);
-      setModel(data.model ?? DEFAULT_GEMINI_MODEL);
+      setModel(resolveModel(data.model ?? DEFAULT_AGENT_MODEL));
       setMessages(
         data.messages.length > 0
           ? data.messages.map((m: Message) => ({
@@ -277,19 +292,26 @@ export function AgentPanel() {
 
   useEffect(() => {
     const saved = localStorage.getItem(MODEL_STORAGE_KEY);
-    if (saved) setModel(saved);
+    if (saved) {
+      const resolved = resolveModel(saved);
+      setModel(resolved);
+      if (resolved !== saved) {
+        localStorage.setItem(MODEL_STORAGE_KEY, resolved);
+      }
+    }
   }, []);
 
   useEffect(() => {
-    if (open) {
-      loadModels();
-      loadChats();
-      setTimeout(() => textareaRef.current?.focus(), 100);
-      if (messages.length === 0) {
-        setMessages([WELCOME]);
-      }
+    if (!open) return;
+    loadModels();
+    loadChats();
+    setTimeout(() => textareaRef.current?.focus(), 100);
+    if (messages.length === 0) {
+      setMessages([WELCOME]);
     }
-  }, [open, loadModels, loadChats, messages.length]);
+    // Load catalog/history once when the panel opens — not on every new message.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   useEffect(() => {
     adjustTextareaHeight();
@@ -300,8 +322,9 @@ export function AgentPanel() {
   }, [messages, loading]);
 
   const selectModel = (id: string) => {
-    setModel(id);
-    localStorage.setItem(MODEL_STORAGE_KEY, id);
+    const resolved = resolveModel(id);
+    setModel(resolved);
+    localStorage.setItem(MODEL_STORAGE_KEY, resolved);
     setModelOpen(false);
   };
 
@@ -580,7 +603,7 @@ export function AgentPanel() {
                   {view === "history" ? "Chat history" : "Vault"}
                 </div>
                 <div className="font-mono text-[9px] tracking-wider" style={{ color: "var(--text-muted)" }}>
-                  {view === "history" ? `${chats.length} conversations` : "AI PORTFOLIO ASSISTANT"}
+                  {view === "history" ? `${chats.length} conversations` : "GROQ · PORTFOLIO ASSISTANT"}
                 </div>
               </div>
 
@@ -619,7 +642,8 @@ export function AgentPanel() {
                   }}
                 >
                   <span className="font-mono text-[10px]">
-                    Model: <span style={{ color: "var(--gold-l)" }}>{modelLabel(models, model)}</span>
+                    Groq model:{" "}
+                    <span style={{ color: "var(--gold-l)" }}>{modelLabel(models, model)}</span>
                   </span>
                   <span className="text-[10px]">{modelOpen ? "▲" : "▼"}</span>
                 </button>
@@ -655,7 +679,7 @@ export function AgentPanel() {
                       >
                         <div className="font-sans text-xs" style={{ color: "var(--text)" }}>
                           {m.label}
-                          {m.id === DEFAULT_GEMINI_MODEL && (
+                          {m.id === DEFAULT_AGENT_MODEL && (
                             <span className="ml-1 font-mono text-[9px]" style={{ color: "var(--gold)" }}>
                               default
                             </span>
@@ -942,9 +966,12 @@ export function AgentPanel() {
                   </svg>
                 </button>
               </div>
-              <div className="mt-2 flex justify-center">
+              <div className="mt-2 flex flex-col items-center gap-0.5">
                 <span className="font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
                   Enter to send · Shift+Enter new line · .xlsx/.csv up to 5 MB
+                </span>
+                <span className="font-mono text-[8px]" style={{ color: "var(--text-dim)" }}>
+                  Llama & open models via Groq
                 </span>
               </div>
             </div>

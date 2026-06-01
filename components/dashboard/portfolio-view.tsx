@@ -4,6 +4,9 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { MfRow, PortfolioPageData, StockRow } from "@/lib/portfolio-data";
 import { formatINR, formatPct } from "@/lib/utils/finance";
+import { computeStockPortfolioStats } from "@/lib/utils/stock-portfolio-stats";
+import { useLivePrices } from "@/hooks/use-live-prices";
+import type { PriceMap } from "@/hooks/use-live-prices";
 import { LiveStocksTable } from "@/components/dashboard/live-stocks-table";
 import { MF_CATEGORIES, mfCategoryBadgeClass } from "@/lib/utils/mf-category";
 
@@ -23,6 +26,22 @@ export function PortfolioView({ data }: PortfolioViewProps) {
   const router = useRouter();
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
+
+  const isStockView = data.view === "in" || data.view === "us";
+  const { prices, loading: pricesLoading } = useLivePrices(
+    isStockView
+      ? data.filteredStockRows.map((h) => ({
+          symbol:      h.symbol,
+          exchange:    h.exchange,
+          displayName: h.displayName,
+        }))
+      : [],
+  );
+
+  const stockStats = useMemo(() => {
+    if (!isStockView) return null;
+    return computeStockPortfolioStats(data.filteredStockRows, prices, data.usdInr);
+  }, [isStockView, data.filteredStockRows, prices, data.usdInr]);
 
   const refresh = () => router.refresh();
 
@@ -103,7 +122,83 @@ export function PortfolioView({ data }: PortfolioViewProps) {
         ]
       : null;
 
-  const stats = mfStats ?? [
+  const stockViewStats =
+    stockStats && isStockView
+      ? [
+          {
+            label: "Invested",
+            value: stockStats.invested > 0 ? formatINR(stockStats.invested, true) : "—",
+            sub:
+              data.view === "us"
+                ? `${stockStats.holdingsCount} US holdings · USD/INR ${data.usdInr.toFixed(2)}`
+                : `${stockStats.holdingsCount} NSE holdings · cost basis`,
+            color: "var(--text)",
+          },
+          {
+            label: "Market Value",
+            value: formatINR(stockStats.marketValue, true),
+            sub: pricesLoading
+              ? "fetching live prices…"
+              : `live CMP · ${stockStats.pricedCount}/${stockStats.holdingsCount} priced`,
+            color: "var(--gold-l)",
+          },
+          {
+            label: "Total Gain",
+            value:
+              stockStats.gainAbs != null
+                ? `${stockStats.gainAbs >= 0 ? "+" : ""}${formatINR(stockStats.gainAbs, true)}`
+                : "—",
+            sub:
+              stockStats.gainPct != null
+                ? formatPct(stockStats.gainPct)
+                : pricesLoading
+                  ? "waiting for live prices"
+                  : "vs avg cost",
+            color:
+              stockStats.gainAbs == null
+                ? "var(--text-muted)"
+                : stockStats.gainAbs >= 0
+                  ? "var(--teal)"
+                  : "var(--red)",
+          },
+          {
+            label: "Today's P&L",
+            value:
+              stockStats.dayPnl != null
+                ? `${stockStats.dayPnl >= 0 ? "+" : ""}${formatINR(stockStats.dayPnl, true)}`
+                : pricesLoading
+                  ? "…"
+                  : "—",
+            sub:
+              stockStats.dayPnlPct != null
+                ? [
+                    formatPct(stockStats.dayPnlPct),
+                    `${stockStats.gainers} up`,
+                    `${stockStats.losers} down`,
+                    stockStats.unchanged > 0 ? `${stockStats.unchanged} flat` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : stockStats.pricedCount > 0
+                  ? [
+                      `${stockStats.gainers} up`,
+                      `${stockStats.losers} down`,
+                      stockStats.unchanged > 0 ? `${stockStats.unchanged} flat` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : "day change vs prev close",
+            color:
+              stockStats.dayPnl == null
+                ? "var(--text-muted)"
+                : stockStats.dayPnl >= 0
+                  ? "var(--teal)"
+                  : "var(--red)",
+          },
+        ]
+      : null;
+
+  const stats = mfStats ?? stockViewStats ?? [
     {
       label: "Total Value",
       value: formatINR(data.displayTotal, true),
@@ -242,6 +337,8 @@ export function PortfolioView({ data }: PortfolioViewProps) {
           usdInr={data.usdInr}
           editMode={editMode}
           onDelete={deleteStock}
+          prices={isStockView ? prices : undefined}
+          pricesLoading={isStockView ? pricesLoading : undefined}
         />
       )}
 
@@ -555,13 +652,21 @@ function StockSection({
   usdInr,
   editMode,
   onDelete,
+  prices,
+  pricesLoading,
 }: {
-  rows: StockRow[];
-  total: number;
-  usdInr: number;
-  editMode: boolean;
-  onDelete: (id: string) => void;
+  rows:           StockRow[];
+  total:          number;
+  usdInr:         number;
+  editMode:       boolean;
+  onDelete:       (id: string) => void;
+  prices?:        PriceMap;
+  pricesLoading?: boolean;
 }) {
+  const liveTotal = prices
+    ? computeStockPortfolioStats(rows, prices, usdInr).marketValue
+    : total;
+
   return (
     <div className="card animate-slide-up stagger-3 min-w-0">
       <div
@@ -575,7 +680,7 @@ function StockSection({
           </div>
         </div>
         <span className="font-mono text-sm font-medium whitespace-nowrap" style={{ color: "var(--gold-l)" }}>
-          {formatINR(total, true)}
+          {pricesLoading && !prices ? "…" : formatINR(liveTotal, true)}
         </span>
       </div>
       <div className="min-w-0 overflow-x-auto">
@@ -584,6 +689,8 @@ function StockSection({
           usdInr={usdInr}
           editMode={editMode}
           onDelete={onDelete}
+          prices={prices}
+          loading={pricesLoading}
         />
       </div>
     </div>
