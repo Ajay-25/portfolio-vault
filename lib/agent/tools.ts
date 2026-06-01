@@ -157,8 +157,51 @@ export const AGENT_TOOLS = [
     },
   },
   {
+    name:        "find_mf_holdings",
+    description: "Search MF holdings by scheme code, fund name keyword, or ISIN. ALWAYS call this before update_mf_holding or add_mf_holding to confirm the correct scheme_code and portfolio (mine vs mother).",
+    parameters: {
+      type:       "object",
+      properties: {
+        portfolio: {
+          type:        "string",
+          enum:        ["mine", "mother", "both"],
+          description: "Default both — narrow to mine or mother when user specifies",
+        },
+        scheme_code: {
+          type:        "string",
+          description: "Exact AMFI scheme code",
+        },
+        keyword: {
+          type:        "string",
+          description: "Partial fund name e.g. Parag Parikh, HDFC Midcap",
+        },
+        isin: {
+          type:        "string",
+          description: "ISIN to locate the fund",
+        },
+      },
+    },
+  },
+  {
+    name:        "update_mf_holding",
+    description: "Patch an EXISTING MF holding — only pass fields you intend to change (units, avg_nav, sip_amount, sip_date, category). Other fields are preserved. Requires scheme_code + portfolio. Use find_mf_holdings first if unsure. Never use add_mf_holding for SIP or unit updates.",
+    parameters: {
+      type:       "object",
+      properties: {
+        scheme_code: { type: "string", description: "AMFI scheme code from find_mf_holdings" },
+        portfolio:   { type: "string", enum: ["mine", "mother"], description: "Required — default mine unless user said mother/mom" },
+        units:       { type: "number", description: "New unit balance (only if changing units)" },
+        avg_nav:     { type: "number", description: "Average purchase NAV (only if changing)" },
+        sip_amount:  { type: "number", description: "Monthly SIP ₹ (only if changing SIP)" },
+        sip_date:    { type: "number", description: "SIP day: 7 or 28 (only if changing)" },
+        category:    { type: "string", description: MF_CATEGORY_HINT },
+      },
+      required: ["scheme_code", "portfolio"],
+    },
+  },
+  {
     name:        "update_mf_units",
-    description: "Update the unit count for a mutual fund holding. Use this after a SIP deduction or lump sum purchase to record the new unit balance.",
+    description: "Update unit count only for an existing MF holding. Prefer update_mf_holding. Requires scheme_code + portfolio.",
     parameters: {
       type:       "object",
       properties: {
@@ -173,7 +216,7 @@ export const AGENT_TOOLS = [
         portfolio: {
           type:        "string",
           enum:        ["mine", "mother"],
-          description: "Which portfolio this holding belongs to",
+          description: "Which portfolio — default mine unless user said mother",
         },
       },
       required: ["scheme_code", "new_units", "portfolio"],
@@ -220,7 +263,7 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "bulk_add_mf_holdings",
-    description: "Add or update multiple MF holdings at once. Auto-resolves AMFI codes from ISIN or scheme name via AMFI master data. Use for Excel/CSV portfolio imports and resets after delete_all_mf_holdings.",
+    description: "Import many MF holdings from Excel/CSV after delete_all or initial load. For single-fund SIP/unit edits use update_mf_holding. Only overwrites fields present in each row; existing holdings are patched, not replaced with zeros.",
     parameters: {
       type:       "object",
       properties: {
@@ -253,7 +296,7 @@ export const AGENT_TOOLS = [
   },
   {
     name:        "add_mf_holding",
-    description: "Add a single mutual fund holding. Provide scheme_code OR isin — code is auto-resolved from ISIN via AMFI if omitted.",
+    description: "CREATE a new MF holding only — fails if scheme_code already exists in that portfolio. For SIP/units/avg NAV changes on existing funds use update_mf_holding. Call find_mf_holdings first to avoid duplicates.",
     parameters: {
       type:       "object",
       properties: {
@@ -403,6 +446,7 @@ export const AGENT_TOOLS = [
 
 export const WRITE_TOOLS = new Set([
   "update_mf_units",
+  "update_mf_holding",
   "add_mf_holding",
   "bulk_add_mf_holdings",
   "delete_mf_holding",

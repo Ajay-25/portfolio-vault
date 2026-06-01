@@ -22,7 +22,16 @@ import {
   type BulkMfRowInput,
 } from "@/lib/apis/mf-scheme-lookup";
 import { PORTFOLIO_IDS, portfolioIds } from "@/lib/agent/portfolio-scope";
-import { resolveMfCategoryForHolding, resolveMfCategoryTool } from "@/lib/data/mf-categories-server";
+import { resolveMfCategoryTool } from "@/lib/data/mf-categories-server";
+import {
+  buildPatchFromBulkRow,
+  buildPatchFromInput,
+  createMfHolding,
+  findMfHoldings,
+  formatFindMfHoldingsText,
+  patchMfHolding,
+} from "@/lib/agent/mf-holding-ops";
+import type { PortfolioKey } from "@/lib/agent/portfolio-scope";
 
 type ToolResult = string;
 
@@ -30,55 +39,8 @@ function portfolioId(input: Record<string, unknown>): string {
   return PORTFOLIO_IDS[input.portfolio as keyof typeof PORTFOLIO_IDS];
 }
 
-async function upsertMfHolding(
-  portfolioId: string,
-  schemeCode: string,
-  schemeName: string,
-  data: {
-    units:      number;
-    avgNAV?:    number | null;
-    sipAmount?: number | null;
-    sipDate?:   number | null;
-    category?:  string | null;
-  },
-): Promise<"created" | "updated"> {
-  const existing = await prisma.mFHolding.findFirst({
-    where: { portfolioId, schemeCode },
-  });
-
-  const { label: category } = await resolveMfCategoryForHolding({
-    categoryHint: data.category ?? existing?.category,
-    schemeName,
-  });
-
-  if (existing) {
-    await prisma.mFHolding.update({
-      where: { id: existing.id },
-      data:  {
-        schemeName,
-        units:     data.units,
-        avgNAV:    data.avgNAV ?? existing.avgNAV,
-        sipAmount: data.sipAmount ?? existing.sipAmount,
-        sipDate:   data.sipDate ?? existing.sipDate,
-        category,
-      },
-    });
-    return "updated";
-  }
-
-  await prisma.mFHolding.create({
-    data: {
-      portfolioId,
-      schemeCode,
-      schemeName,
-      units:     data.units,
-      avgNAV:    data.avgNAV ?? null,
-      sipAmount: data.sipAmount ?? null,
-      sipDate:   data.sipDate ?? null,
-      category,
-    },
-  });
-  return "created";
+function portfolioKey(input: Record<string, unknown>): PortfolioKey {
+  return (input.portfolio as PortfolioKey) ?? "mine";
 }
 
 async function resolveMfCodesForAdd(input: Record<string, unknown>): Promise<
@@ -256,20 +218,32 @@ export async function executeTool(
         return `${formatMFSchemeName(result.schemeName)}: ₹${result.nav.toFixed(4)} (as of ${result.date})`;
       }
 
-      case "update_mf_units": {
-        const pid = portfolioId(input);
-        const holding = await prisma.mFHolding.findFirst({
-          where: { portfolioId: pid, schemeCode: input.scheme_code as string },
-        });
-        if (!holding) {
-          return `Holding not found: scheme ${input.scheme_code} in ${input.portfolio} portfolio`;
+      case "find_mf_holdings": {
+        const portfolio = (input.portfolio as "mine" | "mother" | "both" | undefined) ?? "both";
+        const scheme_code = input.scheme_code as string | undefined;
+        const keyword = input.keyword as string | undefined;
+        const isin = input.isin as string | undefined;
+        if (!scheme_code?.trim() && !keyword?.trim() && !isin?.trim()) {
+          return "Provide scheme_code, keyword, or isin to search holdings.";
         }
-        const prev = holding.units;
-        await prisma.mFHolding.update({
-          where: { id: holding.id },
-          data:  { units: input.new_units as number },
+        const rows = await findMfHoldings({ portfolio, scheme_code, keyword, isin });
+        return formatFindMfHoldingsText(rows, { portfolio, scheme_code, keyword, isin });
+      }
+
+      case "update_mf_holding": {
+        return patchMfHolding({
+          portfolio:   portfolioKey(input),
+          scheme_code: input.scheme_code as string,
+          patch:       buildPatchFromInput(input),
         });
-        return `Updated ${formatMFSchemeName(holding.schemeName)}: ${prev} → ${input.new_units} units`;
+      }
+
+      case "update_mf_units": {
+        return patchMfHolding({
+          portfolio:   portfolioKey(input),
+          scheme_code: input.scheme_code as string,
+          patch:       { units: input.new_units as number },
+        });
       }
 
       case "resolve_mf_category": {
@@ -291,6 +265,7 @@ export async function executeTool(
       }
 
       case "bulk_add_mf_holdings": {
+        const portfolio = portfolioKey(input);
         const pid = portfolioId(input);
         const rows = input.holdings as BulkMfRowInput[] | undefined;
         if (!Array.isArray(rows) || rows.length === 0) {
@@ -303,9 +278,9 @@ export async function executeTool(
         let failed = 0;
 
         for (const row of rows) {
-          if (!row?.scheme_name?.trim() || typeof row.units !== "number") {
+          if (!row?.scheme_name?.trim()) {
             failed++;
-            results.push(`✗ skipped row — scheme_name and units required`);
+            results.push("✗ skipped row — scheme_name required");
             continue;
           }
 
@@ -316,42 +291,75 @@ export async function executeTool(
             continue;
           }
 
-          const action = await upsertMfHolding(pid, resolved.schemeCode, resolved.schemeName, {
-            units:     row.units,
-            avgNAV:    row.avg_nav,
-            sipAmount: row.sip_amount,
-            sipDate:   row.sip_date,
-            category:  row.category,
+          const existing = await prisma.mFHolding.findFirst({
+            where: { portfolioId: pid, schemeCode: resolved.schemeCode },
           });
 
-          if (action === "created") added++;
-          else updated++;
-          const { label: category } = await resolveMfCategoryForHolding({
-            categoryHint: row.category,
-            schemeName:   resolved.schemeName,
+          if (existing) {
+            const patch = buildPatchFromBulkRow(row);
+            if (Object.keys(patch).length === 0) {
+              failed++;
+              results.push(`✗ ${row.scheme_name}: no fields to update`);
+              continue;
+            }
+            const msg = await patchMfHolding({
+              portfolio,
+              scheme_code: resolved.schemeCode,
+              patch,
+            });
+            if (msg.startsWith("Refused") || msg.startsWith("No ") || msg.startsWith("Not ")) {
+              failed++;
+              results.push(`✗ ${msg}`);
+            } else {
+              updated++;
+              results.push(`✓ ${msg}`);
+            }
+            continue;
+          }
+
+          if (typeof row.units !== "number") {
+            failed++;
+            results.push(`✗ ${row.scheme_name}: units required for new holdings`);
+            continue;
+          }
+
+          const msg = await createMfHolding({
+            portfolio,
+            schemeCode: resolved.schemeCode,
+            schemeName: resolved.schemeName,
+            units:      row.units,
+            avgNAV:     row.avg_nav,
+            sipAmount:  row.sip_amount,
+            sipDate:    row.sip_date,
+            category:   row.category,
           });
-          results.push(
-            `✓ [${resolved.schemeCode}] ${resolved.schemeName}: ${row.units} units (${action}${category ? ` · ${category}` : ""})`,
-          );
+
+          if (msg.startsWith("Refused")) {
+            failed++;
+            results.push(`✗ ${msg}`);
+          } else {
+            added++;
+            results.push(`✓ ${msg}`);
+          }
         }
 
-        return `Import to ${input.portfolio}: ${added} added, ${updated} updated, ${failed} failed.\n${results.join("\n")}`;
+        return `Import to ${portfolio}: ${added} added, ${updated} updated, ${failed} failed.\n${results.join("\n")}`;
       }
 
       case "add_mf_holding": {
-        const pid = portfolioId(input);
         const resolved = await resolveMfCodesForAdd(input);
         if ("error" in resolved) return resolved.error;
 
-        const action = await upsertMfHolding(pid, resolved.schemeCode, resolved.schemeName, {
-          units:     input.units as number,
-          avgNAV:    input.avg_nav as number | undefined,
-          sipAmount: input.sip_amount as number | undefined,
-          sipDate:   input.sip_date as number | undefined,
-          category:  input.category as string | undefined,
+        return createMfHolding({
+          portfolio:  portfolioKey(input),
+          schemeCode: resolved.schemeCode,
+          schemeName: resolved.schemeName,
+          units:      input.units as number,
+          avgNAV:     input.avg_nav as number | undefined,
+          sipAmount:  input.sip_amount as number | undefined,
+          sipDate:    input.sip_date as number | undefined,
+          category:   input.category as string | undefined,
         });
-
-        return `${action === "created" ? "Added" : "Updated"} ${resolved.schemeName} [${resolved.schemeCode}] to ${input.portfolio} portfolio. Units: ${input.units}`;
       }
 
       case "delete_mf_holding": {

@@ -127,7 +127,16 @@ MF category is optional — use resolve_mf_category or bulk_add_mf_holdings; cat
 User may attach Excel/CSV in chat — parsed sheet data is included with their message.
 User messages may be multiline with tabs, spaces, and aligned columns (pasted tables). Preserve that structure when reading; treat tabs as column separators.
 
-RULES: Confirm before deletes. State old→new on unit updates. Be concise. Use ₹ and L/Cr formatting.`;
+MF WRITE SAFETY (critical):
+- Default portfolio is mine unless the user explicitly says mother/mom/mother's.
+- Before ANY MF write, call find_mf_holdings to confirm scheme_code and portfolio.
+- update_mf_holding: pass ONLY fields being changed — units, sip_amount, sip_date, avg_nav are preserved otherwise.
+- add_mf_holding is CREATE-only; never use it to update SIP or units on an existing fund.
+- If find_mf_holdings returns multiple matches or the fund is in the other portfolio, STOP and ask the user to confirm scheme_code + portfolio before writing.
+- Never create a duplicate fund because of a slightly different name — same AMFI scheme_code or same normalized name = one holding.
+- After updates, always state old→new values in your reply.
+
+RULES: Confirm before deletes. Be concise. Use ₹ and L/Cr formatting.`;
 }
 
 /** Cached ~2 min — tools always fetch fresh data when called. */

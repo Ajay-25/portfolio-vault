@@ -900,12 +900,13 @@ export function AgentPanel() {
                       });
                       return;
                     }
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       send(input);
+                      return;
                     }
                   }}
-                  placeholder={"Ask about your portfolio…\nEnter = new line · Tab = indent · ⌘/Ctrl+Enter = send"}
+                  placeholder={"Ask about your portfolio…\nEnter to send · Shift+Enter for new line · Tab to indent"}
                   disabled={loading}
                   className="max-h-32 min-h-[2.75rem] flex-1 resize-none bg-transparent font-sans text-sm leading-relaxed outline-none"
                   style={{
@@ -943,7 +944,7 @@ export function AgentPanel() {
               </div>
               <div className="mt-2 flex justify-center">
                 <span className="font-mono text-[9px]" style={{ color: "var(--text-muted)" }}>
-                  Multiline · tabs preserved · ⌘/Ctrl+Enter to send · .xlsx/.csv up to 5 MB
+                  Enter to send · Shift+Enter new line · .xlsx/.csv up to 5 MB
                 </span>
               </div>
             </div>

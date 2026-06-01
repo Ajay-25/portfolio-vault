@@ -30,6 +30,8 @@ const TOOL_STATUS: Record<string, string> = {
   get_upcoming_sips:                 "Checking upcoming SIPs…",
   get_action_items:                  "Loading action items…",
   get_nav:                           "Fetching NAV…",
+  find_mf_holdings:                  "Searching MF holdings…",
+  update_mf_holding:                 "Updating MF holding…",
   lookup_mf_scheme:                  "Looking up AMFI scheme code…",
   resolve_mf_category:               "Resolving MF category…",
   bulk_add_mf_holdings:              "Importing MF holdings…",
