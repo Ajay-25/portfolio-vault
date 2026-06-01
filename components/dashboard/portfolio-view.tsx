@@ -8,24 +8,18 @@ import { computeStockPortfolioStats } from "@/lib/utils/stock-portfolio-stats";
 import { useLivePrices } from "@/hooks/use-live-prices";
 import type { PriceMap } from "@/hooks/use-live-prices";
 import { LiveStocksTable } from "@/components/dashboard/live-stocks-table";
+import { EditMfModal } from "@/components/dashboard/edit-mf-modal";
+import { EditStockModal } from "@/components/dashboard/edit-stock-modal";
+import { HoldingRowActions } from "@/components/dashboard/holding-row-actions";
 import { MF_CATEGORIES, mfCategoryBadgeClass } from "@/lib/utils/mf-category";
 
 interface PortfolioViewProps {
   data: PortfolioPageData;
 }
 
-function patchMf(id: string, body: Record<string, unknown>) {
-  return fetch("/api/holdings/mf", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, ...body }),
-  });
-}
-
 export function PortfolioView({ data }: PortfolioViewProps) {
   const router = useRouter();
   const [editMode, setEditMode] = useState(false);
-  const [saving, setSaving] = useState<string | null>(null);
 
   const isStockView = data.view === "in" || data.view === "us";
   const { prices, loading: pricesLoading } = useLivePrices(
@@ -318,13 +312,6 @@ export function PortfolioView({ data }: PortfolioViewProps) {
           total={data.mfTotal}
           portfolioId={data.portfolioId}
           editMode={editMode}
-          saving={saving}
-          onSave={async (id, body) => {
-            setSaving(id);
-            await patchMf(id, body);
-            setSaving(null);
-            refresh();
-          }}
           onDelete={deleteMf}
           onAdded={refresh}
         />
@@ -354,8 +341,6 @@ function MfSection({
   total,
   portfolioId,
   editMode,
-  saving,
-  onSave,
   onDelete,
   onAdded,
 }: {
@@ -363,11 +348,10 @@ function MfSection({
   total: number;
   portfolioId: string;
   editMode: boolean;
-  saving: string | null;
-  onSave: (id: string, body: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => void;
   onAdded: () => void;
 }) {
+  const [editingRow, setEditingRow] = useState<MfRow | null>(null);
   type MfSortKey =
     | "schemeName"
     | "category"
@@ -475,7 +459,6 @@ function MfSection({
           <div className="stat-label mb-0.5">Mutual Funds</div>
           <div className="text-sm font-medium" style={{ color: "var(--text)" }}>
             {rows.length} holdings · Live NAVs
-            {editMode && " · click units/avgNAV to edit"}
           </div>
         </div>
         <span className="font-mono text-sm font-medium whitespace-nowrap" style={{ color: "var(--gold-l)" }}>
@@ -504,15 +487,17 @@ function MfSection({
               key={h.id}
               row={h}
               editMode={editMode}
-              saving={saving === h.id}
-              onSave={onSave}
-              onDelete={onDelete}
+              onEdit={() => setEditingRow(h)}
+              onDelete={() => onDelete(h.id)}
             />
           ))}
         </tbody>
       </table>
       </div>
       {editMode && <AddMfForm portfolioId={portfolioId} onAdded={onAdded} />}
+      {editingRow && (
+        <EditMfModal row={editingRow} onClose={() => setEditingRow(null)} />
+      )}
     </div>
   );
 }
@@ -520,32 +505,16 @@ function MfSection({
 function MfRowCells({
   row,
   editMode,
-  saving,
-  onSave,
+  onEdit,
   onDelete,
 }: {
   row: MfRow;
   editMode: boolean;
-  saving: boolean;
-  onSave: (id: string, body: Record<string, unknown>) => Promise<void>;
-  onDelete: (id: string) => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
-  const [units, setUnits] = useState(String(row.units));
-  const [avgNAV, setAvgNAV] = useState(row.avgNAV != null ? String(row.avgNAV) : "");
-
-  const saveUnits = () => {
-    const val = parseFloat(units);
-    if (!isNaN(val) && val !== row.units) onSave(row.id, { units: val });
-  };
-
-  const saveAvgNav = () => {
-    const val = avgNAV === "" ? null : parseFloat(avgNAV);
-    if (val !== null && isNaN(val)) return;
-    if (val !== row.avgNAV) onSave(row.id, { avgNAV: val });
-  };
-
   return (
-    <tr style={{ opacity: saving ? 0.6 : 1 }}>
+    <tr>
       <td>
         <div className="text-sm font-medium" style={{ color: "var(--text)" }}>
           {row.schemeName}
@@ -562,37 +531,14 @@ function MfRowCells({
         )}
       </td>
       <td className="text-right">
-        {editMode ? (
-          <input
-            type="number"
-            step="0.001"
-            className="input-field font-mono text-sm w-full min-w-[6.5rem] max-w-[8rem] ml-auto text-right sm:w-24 sm:min-w-0 sm:max-w-none"
-            value={units}
-            onChange={(e) => setUnits(e.target.value)}
-            onBlur={saveUnits}
-          />
-        ) : (
-          <span className="font-mono text-sm" style={{ color: "var(--text-dim)" }}>
-            {row.units.toLocaleString("en-IN")}
-          </span>
-        )}
+        <span className="font-mono text-sm" style={{ color: "var(--text-dim)" }}>
+          {row.units.toLocaleString("en-IN")}
+        </span>
       </td>
       <td className="text-right">
-        {editMode ? (
-          <input
-            type="number"
-            step="0.01"
-            className="input-field font-mono text-sm w-full min-w-[6.5rem] max-w-[8rem] ml-auto text-right sm:w-24 sm:min-w-0 sm:max-w-none"
-            placeholder="—"
-            value={avgNAV}
-            onChange={(e) => setAvgNAV(e.target.value)}
-            onBlur={saveAvgNav}
-          />
-        ) : (
-          <span className="font-mono text-sm" style={{ color: "var(--text-dim)" }}>
-            {row.avgNAV ? `₹${row.avgNAV.toFixed(2)}` : "—"}
-          </span>
-        )}
+        <span className="font-mono text-sm" style={{ color: "var(--text-dim)" }}>
+          {row.avgNAV ? `₹${row.avgNAV.toFixed(2)}` : "—"}
+        </span>
       </td>
       <td className="font-mono text-right" style={{ color: "var(--text)" }}>
         <div className="text-sm font-medium">
@@ -632,14 +578,7 @@ function MfRowCells({
       </td>
       {editMode && (
         <td>
-          <button
-            type="button"
-            onClick={() => onDelete(row.id)}
-            className="text-[10px] font-mono px-2 py-1 rounded"
-            style={{ color: "var(--red)" }}
-          >
-            Delete
-          </button>
+          <HoldingRowActions onEdit={onEdit} onDelete={onDelete} />
         </td>
       )}
     </tr>
@@ -663,6 +602,8 @@ function StockSection({
   prices?:        PriceMap;
   pricesLoading?: boolean;
 }) {
+  const [editingRow, setEditingRow] = useState<StockRow | null>(null);
+
   const liveTotal = prices
     ? computeStockPortfolioStats(rows, prices, usdInr).marketValue
     : total;
@@ -688,11 +629,18 @@ function StockSection({
           holdings={rows}
           usdInr={usdInr}
           editMode={editMode}
+          onEdit={(holding) => {
+            const row = rows.find((r) => r.id === holding.id);
+            if (row) setEditingRow(row);
+          }}
           onDelete={onDelete}
           prices={prices}
           loading={pricesLoading}
         />
       </div>
+      {editingRow && (
+        <EditStockModal row={editingRow} onClose={() => setEditingRow(null)} />
+      )}
     </div>
   );
 }

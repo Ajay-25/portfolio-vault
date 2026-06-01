@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLivePrices } from "@/hooks/use-live-prices";
 import { formatINR } from "@/lib/utils/finance";
+import { HoldingRowActions } from "@/components/dashboard/holding-row-actions";
 
 type StockHolding = {
   id: string;
@@ -79,6 +80,7 @@ export function LiveStocksTable({
   holdings,
   usdInr,
   editMode = false,
+  onEdit,
   onDelete,
   prices: externalPrices,
   loading: externalLoading,
@@ -86,6 +88,7 @@ export function LiveStocksTable({
   holdings: StockHolding[];
   usdInr:   number;
   editMode?: boolean;
+  onEdit?:  (holding: StockHolding) => void;
   onDelete?: (id: string) => void;
   prices?:  ReturnType<typeof useLivePrices>["prices"];
   loading?: boolean;
@@ -300,16 +303,12 @@ export function LiveStocksTable({
                 </span>
               )}
             </td>
-            {editMode && onDelete && (
+            {editMode && onDelete && onEdit && (
               <td>
-                <button
-                  type="button"
-                  onClick={() => onDelete(h.id)}
-                  className="text-[10px] font-mono px-2 py-1 rounded"
-                  style={{ color: "var(--red)" }}
-                >
-                  Delete
-                </button>
+                <HoldingRowActions
+                  onEdit={() => onEdit(h)}
+                  onDelete={() => onDelete(h.id)}
+                />
               </td>
             )}
           </tr>
