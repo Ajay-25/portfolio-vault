@@ -50,6 +50,9 @@ const TERMINAL_READ_TOOLS = new Set([
   "get_nav",
   "list_fi_holdings",
   "calculate_fi_projection",
+  "get_home_summary",
+  "get_payer_balance",
+  "list_work_streams",
 ]);
 
 const KNOWN_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
@@ -98,6 +101,14 @@ const TOOL_STATUS: Record<string, string> = {
   complete_action_item:              "Completing action item…",
   log_snapshot:                      "Logging snapshot…",
   update_investment_fund_value:      "Updating fund value…",
+  log_home_expense:                  "Logging home expense…",
+  get_home_summary:                  "Summarizing home project…",
+  get_payer_balance:                 "Checking payer balance…",
+  record_repayment:                  "Recording repayment…",
+  add_builder_deduction:             "Adding builder deduction…",
+  list_work_streams:                 "Listing work streams…",
+  create_work_stream:                "Creating work stream…",
+  update_home_transaction_settlement:"Updating settlement…",
 };
 
 function toolStatus(name: string): string {

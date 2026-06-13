@@ -910,6 +910,107 @@ export const AGENT_TOOLS = [
       required: ["policy_keyword", "new_value", "portfolio"],
     },
   },
+  {
+    name:        "log_home_expense",
+    description:
+      "Log a home project expense transaction. Fuzzy-match work_stream and paid_by by name. " +
+      "If work stream doesn't exist, ask whether to create it with create_work_stream.",
+    parameters: {
+      type:       "object",
+      properties: {
+        description:      { type: "string" },
+        amount:           { type: "number" },
+        work_stream:      { type: "string", description: "Work stream name, e.g. Sofa, Carpentry" },
+        line_item:        { type: "string", description: "Optional line item name" },
+        paid_by:          { type: "string", description: "Payer name, e.g. Me, Father-in-law" },
+        settlement_type:  { type: "string", enum: ["self", "repayable", "gift"] },
+        phase:            { type: "string", enum: ["advance", "part", "final", "full"] },
+        payment_mode:     { type: "string" },
+        date:             { type: "string", description: "ISO date" },
+      },
+      required: ["description", "amount", "work_stream"],
+    },
+  },
+  {
+    name:        "get_home_summary",
+    description: "Get home project summary: total spent, per-stream breakdown, owe-back balances, builder deduction total.",
+    parameters: {
+      type:       "object",
+      properties: {},
+    },
+  },
+  {
+    name:        "get_payer_balance",
+    description: "How much is owed back to a family payer (e.g. father-in-law). Fuzzy-match payer name.",
+    parameters: {
+      type:       "object",
+      properties: {
+        paid_by: { type: "string", description: "Payer name or relationship keyword" },
+      },
+      required: ["paid_by"],
+    },
+  },
+  {
+    name:        "record_repayment",
+    description: "Log a repayment to a payer, reducing the owe-back balance (refund-direction transaction).",
+    parameters: {
+      type:       "object",
+      properties: {
+        paid_by:       { type: "string" },
+        amount:        { type: "number" },
+        payment_mode:  { type: "string" },
+        date:          { type: "string" },
+      },
+      required: ["paid_by", "amount"],
+    },
+  },
+  {
+    name:        "add_builder_deduction",
+    description: "Add an item to deduct from the final builder payment.",
+    parameters: {
+      type:       "object",
+      properties: {
+        item:              { type: "string" },
+        estimated_amount:  { type: "number" },
+        reason:            { type: "string" },
+        self_paid_amount:  { type: "number" },
+      },
+      required: ["item", "estimated_amount"],
+    },
+  },
+  {
+    name:        "list_work_streams",
+    description: "List all home project work streams with spend totals.",
+    parameters: {
+      type:       "object",
+      properties: {},
+    },
+  },
+  {
+    name:        "create_work_stream",
+    description: "Add a new home project work stream category.",
+    parameters: {
+      type:       "object",
+      properties: {
+        name:            { type: "string" },
+        category:        { type: "string" },
+        confirm_create:  { type: "boolean", description: "Set true after user confirms creation" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name:        "update_home_transaction_settlement",
+    description: "Change a transaction settlement type (repayable vs gift). Use description keyword to find it.",
+    parameters: {
+      type:       "object",
+      properties: {
+        description:      { type: "string" },
+        settlement_type:  { type: "string", enum: ["self", "repayable", "gift"] },
+      },
+      required: ["description", "settlement_type"],
+    },
+  },
 ] as AgentToolDefinition[];
 
 export const WRITE_TOOLS = new Set([
@@ -939,4 +1040,9 @@ export const WRITE_TOOLS = new Set([
   "complete_action_item",
   "log_snapshot",
   "update_investment_fund_value",
+  "log_home_expense",
+  "record_repayment",
+  "add_builder_deduction",
+  "create_work_stream",
+  "update_home_transaction_settlement",
 ]);

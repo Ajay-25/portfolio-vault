@@ -4,6 +4,7 @@ import { getAllPortfolios, getTriggers, getActionItems } from "@/lib/data/portfo
 import { getUSDINR } from "@/lib/data/fx-server";
 import { getUrgentInsuranceRenewals } from "@/lib/insurance-data";
 import { getUpcomingFixedIncomeMaturities, fiValue } from "@/lib/fixed-income-data";
+import { getHomeProject, computeProjectStats } from "@/lib/project-data";
 import { formatINR, absoluteReturn } from "@/lib/utils/finance";
 import { TopBar } from "@/components/layout/top-bar";
 import { NiftyTrigger } from "@/components/dashboard/nifty-trigger";
@@ -14,13 +15,14 @@ import { SkeletonTable } from "@/components/ui/skeletons";
 export const revalidate = 300; // ISR: revalidate every 5 minutes
 
 async function getDashboardData() {
-  const [portfolios, triggers, actions, usdInr, urgentRenewals, upcomingFI] = await Promise.all([
+  const [portfolios, triggers, actions, usdInr, urgentRenewals, upcomingFI, homeProject] = await Promise.all([
     getAllPortfolios(),
     getTriggers(),
     getActionItems(5),
     getUSDINR(),
     getUrgentInsuranceRenewals(30),
     getUpcomingFixedIncomeMaturities(30, 3),
+    getHomeProject("project-home"),
   ]);
 
   // Calculate portfolio values (avgNAV for MF — live NAVs stream in via MFHoldingsPreview)
@@ -58,11 +60,13 @@ async function getDashboardData() {
   const totalMFInvested = portfolioValues.reduce((s, p) => s + p.mfInvested, 0);
   const totalGain       = totalMFInvested > 0 ? absoluteReturn(totalMFInvested, totalNetWorth) : 0;
 
-  return { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals, upcomingFI };
+  const homeStats = homeProject ? computeProjectStats(homeProject) : null;
+
+  return { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals, upcomingFI, homeStats };
 }
 
 export default async function DashboardPage() {
-  const { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals, upcomingFI } =
+  const { portfolioValues, totalNetWorth, totalGain, triggers, actions, urgentRenewals, upcomingFI, homeStats } =
     await getDashboardData();
 
   const myPortfolio  = portfolioValues.find((p) => p.type === "primary");
@@ -252,6 +256,29 @@ export default async function DashboardPage() {
             <NiftyTrigger triggers={triggers} />
           </div>
         </div>
+
+        {homeStats && (
+          <Link
+            href="/dashboard/projects/project-home"
+            className="card animate-slide-up block"
+            style={{ padding: "16px 20px", borderColor: "rgba(201,168,76,0.3)", textDecoration: "none" }}
+          >
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="font-mono text-lg" style={{ color: "var(--gold-l)" }}>◫</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm" style={{ color: "var(--text)" }}>
+                  HOME setup
+                </div>
+                <div className="font-mono text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  {formatINR(homeStats.totalSpent, true)} spent · {formatINR(homeStats.totalOwed, true)} owed to family · {formatINR(homeStats.deductionEstimate, true)} to deduct from builder
+                </div>
+              </div>
+              <span className="ml-auto font-mono text-xs" style={{ color: "var(--gold-l)" }}>
+                VIEW →
+              </span>
+            </div>
+          </Link>
+        )}
 
         {upcomingFI.length > 0 && (
           <div

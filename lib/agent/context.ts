@@ -4,6 +4,7 @@ import { getCachedNAVs } from "@/lib/data/nav-server";
 import { getUSDINR } from "@/lib/data/fx-server";
 import { formatMFSchemeName } from "@/lib/utils/mf-scheme-name";
 import { toPortfolioKey } from "@/lib/agent/portfolio-scope";
+import { buildHomeProjectContextBlock } from "@/lib/agent/project-agent-ops";
 
 function lakhs(n: number): string {
   return `₹${(n / 100000).toFixed(2)}L`;
@@ -21,7 +22,7 @@ async function buildAgentContextInner(): Promise<string> {
     day:     "numeric",
   });
 
-  const [portfolios, triggers, actions, usdInr, priceCache] = await Promise.all([
+  const [portfolios, triggers, actions, usdInr, priceCache, homeProjectBlock] = await Promise.all([
     prisma.portfolio.findMany({
       include: {
         mfHoldings:          true,
@@ -38,6 +39,7 @@ async function buildAgentContextInner(): Promise<string> {
     }),
     getUSDINR(),
     prisma.priceCache.findMany(),
+    buildHomeProjectContextBlock(),
   ]);
 
   const livePrices = new Map(
@@ -154,7 +156,13 @@ FIXED INCOME HOLDINGS (live)
 ═══════════════════════════════════════
 ${fiContext}
 
+═══════════════════════════════════════
+HOME PROJECT (live)
+═══════════════════════════════════════
+${homeProjectBlock}
+
 TOOLS — call for live returns/P&L: get_stock_returns, get_mf_returns, get_fixed_income_returns, get_insurance_investment_returns, get_investment_returns (all assets). Never say you cannot fetch live prices.
+Home project: log_home_expense, get_home_summary, get_payer_balance, record_repayment, add_builder_deduction, list_work_streams, create_work_stream, update_home_transaction_settlement. Fuzzy-match work streams and payers; ask before creating streams.
 Bulk deletes: use delete_all_mf_holdings or delete_all_stocks when user wants to clear an entire asset class — do NOT call delete_mf_holding once per fund.
 Excel/CSV MF import: use bulk_add_mf_holdings with ISIN + name + units per row — AMFI codes are resolved automatically via lookup_mf_scheme / AMFI master. Do NOT ask the user for scheme codes when ISIN is present.
 Excel/CSV stock import: use bulk_add_stocks with symbol, exchange, qty, avg_price per row in ONE tool call — never loop add_or_update_stock row-by-row (hits rate limits and fails on Groq).
@@ -212,7 +220,7 @@ RULES: Be concise. Use ₹ and L/Cr formatting.`;
 
 /** Cached ~2 min — tools always fetch fresh data when called. */
 export async function buildAgentContext(): Promise<string> {
-  return unstable_cache(buildAgentContextInner, ["agent-context-v8"], {
+  return unstable_cache(buildAgentContextInner, ["agent-context-v9"], {
     revalidate: 120,
     tags:       ["agent-context"],
   })();

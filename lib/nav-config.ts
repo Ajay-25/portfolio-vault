@@ -4,6 +4,8 @@ export interface NavItem {
   href: string;
   label: string;
   icon: string;
+  /** Nested items rendered indented under this entry */
+  children?: NavItem[];
   /** Returns true when this nav item should appear active */
   isActive?: (pathname: string, search: string) => boolean;
 }
@@ -47,6 +49,26 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/goal",
         label: "Goal Tracker",
         icon: "◎",
+      },
+    ],
+  },
+  {
+    section: "Expenses",
+    items: [
+      {
+        href: "/dashboard/projects",
+        label: "Project",
+        icon: "◫",
+        isActive: (pathname) => pathname === "/dashboard/projects",
+        children: [
+          {
+            href: "/dashboard/projects/project-home",
+            label: "Home",
+            icon: "⌂",
+            isActive: (pathname) =>
+              pathname.startsWith("/dashboard/projects/project-home"),
+          },
+        ],
       },
     ],
   },
@@ -181,12 +203,18 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+/** Work stream IDs used for flat purchase / builder payment tracking */
+export const BUILDER_PAYMENT_STREAM_IDS = ["ws-flat", "ws-loan", "ws-fees"] as const;
+
 export function navItemIsActive(
   item: NavItem,
   pathname: string,
   search: string,
 ): boolean {
-  if (item.isActive) return item.isActive(pathname, search);
+  if (item.isActive?.(pathname, search)) return true;
+  if (item.children?.some((child) => navItemIsActive(child, pathname, search))) {
+    return true;
+  }
   const [hrefPath, hrefQuery] = item.href.split("?");
   if (pathname !== hrefPath) return false;
   if (!hrefQuery) return search === "" || search === "?";
@@ -196,4 +224,16 @@ export function navItemIsActive(
     if (actual.get(key) !== value) return false;
   }
   return true;
+}
+
+export function sectionHasActiveItem(
+  section: NavSection,
+  pathname: string,
+  search: string,
+): boolean {
+  return section.items.some((item) => navItemIsActive(item, pathname, search));
+}
+
+export function flattenNavItems(items: NavItem[]): NavItem[] {
+  return items.flatMap((item) => [item, ...(item.children ? flattenNavItems(item.children) : [])]);
 }

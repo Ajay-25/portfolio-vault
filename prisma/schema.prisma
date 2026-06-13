@@ -330,3 +330,146 @@ model AgentMessage {
 
   @@index([chatId, createdAt])
 }
+
+// ──────────────────────────────────────────
+// HOME PROJECT EXPENSE TRACKER
+// ──────────────────────────────────────────
+
+model Project {
+  id           String   @id @default(uuid())
+  ownerId      String   @default("primary")
+  name         String
+  type         String   @default("home")
+  description  String?
+  totalBudget  Float?
+  status       String   @default("ongoing")
+  expectedDate DateTime?
+  address      String?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  workStreams  WorkStream[]
+  payers       Payer[]
+  deductions   BuilderDeduction[]
+  transactions Transaction[]
+}
+
+model WorkStream {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String
+  category    String   @default("setup")
+  icon        String?
+  status      String   @default("ongoing")
+  budgetEst   Float?
+  sortOrder   Int      @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lineItems    LineItem[]
+  transactions Transaction[]
+
+  @@index([projectId])
+}
+
+model LineItem {
+  id            String   @id @default(uuid())
+  workStreamId  String
+  name          String
+  vendor        String?
+  estimatedCost Float?
+  status        String   @default("ongoing")
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  workStream   WorkStream    @relation(fields: [workStreamId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([workStreamId])
+}
+
+model Payer {
+  id           String   @id @default(uuid())
+  projectId    String
+  name         String
+  relationship String?
+  isSelf       Boolean  @default(false)
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  advances     CashAdvance[]
+
+  @@index([projectId])
+}
+
+model Transaction {
+  id             String   @id @default(uuid())
+  projectId      String
+  workStreamId   String?
+  lineItemId     String?
+
+  description    String
+  amount         Float
+  date           DateTime
+  direction      String   @default("outflow")
+
+  paidByPayerId  String?
+  settlementType String   @default("self")
+
+  phase          String   @default("full")
+  paymentMode    String?
+  paidBy_card    String?
+  reference      String?
+  hasReceipt     Boolean  @default(false)
+
+  cashAdvanceId  String?
+
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workStream  WorkStream?  @relation(fields: [workStreamId], references: [id], onDelete: SetNull)
+  lineItem    LineItem?    @relation(fields: [lineItemId], references: [id], onDelete: SetNull)
+  payer       Payer?       @relation(fields: [paidByPayerId], references: [id], onDelete: SetNull)
+  cashAdvance CashAdvance? @relation(fields: [cashAdvanceId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([workStreamId])
+  @@index([paidByPayerId])
+}
+
+model CashAdvance {
+  id         String   @id @default(uuid())
+  payerId    String
+  projectId  String
+  label      String
+  totalGiven Float    @default(0)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  payer        Payer         @relation(fields: [payerId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([projectId])
+}
+
+model BuilderDeduction {
+  id              String   @id @default(uuid())
+  projectId       String
+  item            String
+  reason          String?
+  estimatedAmount Float
+  isConfirmed     Boolean  @default(false)
+  confirmedAmount Float?
+  selfPaidAmount  Float?
+  status          String   @default("pending")
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}

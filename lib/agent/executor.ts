@@ -58,6 +58,16 @@ import {
   updateFiHolding,
   updateNpsAllocation,
 } from "@/lib/agent/fi-agent-ops";
+import {
+  addBuilderDeductionText,
+  createWorkStreamText,
+  getHomeSummaryText,
+  getPayerBalanceText,
+  listWorkStreamsText,
+  logHomeExpense,
+  recordRepaymentText,
+  updateTransactionSettlementText,
+} from "@/lib/agent/project-agent-ops";
 import { coerceToolInput, parseOptionalNumber } from "@/lib/agent/coerce-tool-input";
 import { confirmationRequired, isDeleteConfirmed } from "@/lib/agent/delete-confirmation";
 import {
@@ -760,6 +770,30 @@ export async function executeTool(
         });
         return `Updated ${match.planName} fund value: ₹${((input.new_value as number) / 100000).toFixed(2)}L (as of today)`;
       }
+
+      case "log_home_expense":
+        return logHomeExpense(input);
+
+      case "get_home_summary":
+        return getHomeSummaryText();
+
+      case "get_payer_balance":
+        return getPayerBalanceText((input.paid_by as string) ?? "");
+
+      case "record_repayment":
+        return recordRepaymentText(input);
+
+      case "add_builder_deduction":
+        return addBuilderDeductionText(input);
+
+      case "list_work_streams":
+        return listWorkStreamsText();
+
+      case "create_work_stream":
+        return createWorkStreamText(input);
+
+      case "update_home_transaction_settlement":
+        return updateTransactionSettlementText(input);
 
       default:
         return `Unknown tool: ${name}`;

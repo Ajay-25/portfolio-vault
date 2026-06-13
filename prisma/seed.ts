@@ -590,6 +590,141 @@ async function main() {
   }
   console.log(`✓ Mother's insurance: ${momInsurance.length} policies`);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // HOME PROJECT
+  // ══════════════════════════════════════════════════════════════════════════
+  const home = await prisma.project.upsert({
+    where:  { id: "project-home" },
+    update: {},
+    create: {
+      id:          "project-home",
+      name:        "HOME — Flat Purchase & Setup",
+      type:        "home",
+      description: "Flat purchase plus all setup work to make it livable",
+      address:     "New flat",
+      status:      "ongoing",
+    },
+  });
+
+  const payers = [
+    { id: "payer-me",   name: "Me",             relationship: "self",           isSelf: true  },
+    { id: "payer-wife", name: "Wife",           relationship: "spouse",         isSelf: true  },
+    { id: "payer-fil",  name: "Father-in-law",  relationship: "father_in_law",  isSelf: false },
+    { id: "payer-mil",  name: "Mother-in-law",  relationship: "mother_in_law",  isSelf: false },
+  ];
+  for (const p of payers) {
+    await prisma.payer.upsert({
+      where: { id: p.id },
+      update: {},
+      create: { ...p, projectId: home.id },
+    });
+  }
+
+  const streams = [
+    { id: "ws-flat",   name: "Flat Purchase",    category: "purchase",   icon: "building",         sortOrder: 1 },
+    { id: "ws-loan",   name: "Home Loan",        category: "loan",       icon: "building-bank",    sortOrder: 2 },
+    { id: "ws-fees",   name: "Purchase Fees",    category: "fees",       icon: "file-text",        sortOrder: 3 },
+    { id: "ws-sofa",   name: "Sofa",             category: "furniture",  icon: "sofa",             sortOrder: 4 },
+    { id: "ws-carp",   name: "Carpentry",        category: "furniture",  icon: "ruler",            sortOrder: 5 },
+    { id: "ws-stone",  name: "Stone Work",       category: "stonework",  icon: "diamond",          sortOrder: 6 },
+    { id: "ws-ac",     name: "AC & Appliances",  category: "appliances", icon: "air-conditioning", sortOrder: 7 },
+    { id: "ws-gates",  name: "Gates & Fittings", category: "gates",      icon: "door",             sortOrder: 8 },
+    { id: "ws-panels", name: "Panels & Misc",    category: "panels",     icon: "layout-grid",      sortOrder: 9 },
+    { id: "ws-utils",  name: "Utilities",        category: "utilities",  icon: "bolt",             sortOrder: 10 },
+  ];
+  for (const s of streams) {
+    await prisma.workStream.upsert({
+      where: { id: s.id },
+      update: {},
+      create: { ...s, projectId: home.id },
+    });
+  }
+
+  const lineItems = [
+    { id: "li-sofa-carp",    workStreamId: "ws-sofa",  name: "Sofa carpenter labour", vendor: "Carpenter",      status: "part_paid" },
+    { id: "li-sofa-maker",   workStreamId: "ws-sofa",  name: "Sofa maker (installer)", vendor: "Sofa maker",    status: "part_paid" },
+    { id: "li-sofa-cloth",   workStreamId: "ws-sofa",  name: "Sofa cloth (Mumbai)",   vendor: "Mumbai vendor",  status: "completed" },
+    { id: "li-sofa-foam",    workStreamId: "ws-sofa",  name: "Foam",                  vendor: "Foam supplier",  status: "part_paid" },
+    { id: "li-sofa-hw",      workStreamId: "ws-sofa",  name: "Sofa hardware goods",   vendor: "Hardware shop",  status: "completed" },
+    { id: "li-carp-bed",     workStreamId: "ws-carp",  name: "Queen bed",             vendor: "Carpenter",      status: "advance_paid" },
+    { id: "li-carp-ws",      workStreamId: "ws-carp",  name: "Workstation",           vendor: "Carpenter",      status: "advance_paid" },
+    { id: "li-carp-cloth",   workStreamId: "ws-carp",  name: "Cloth box",             vendor: "Carpenter",      status: "advance_paid" },
+    { id: "li-carp-shoe",    workStreamId: "ws-carp",  name: "Shoe rack",             vendor: "Carpenter",      status: "advance_paid" },
+    { id: "li-stone-temple", workStreamId: "ws-stone", name: "Temple stone work",     vendor: "Stone mason",    status: "completed" },
+    { id: "li-stone-nano",   workStreamId: "ws-stone", name: "Nano white stone",      vendor: "Stone shop",     status: "completed" },
+    { id: "li-stone-kitch",  workStreamId: "ws-stone", name: "Kitchen hob cut + gas hole", vendor: "Stone mason", status: "completed" },
+    { id: "li-ac-haier",     workStreamId: "ws-ac",    name: "Haier Split AC",        vendor: "Electronics",    status: "completed" },
+    { id: "li-ac-ogen",      workStreamId: "ws-ac",    name: "O-General Window AC",   vendor: "Electronics",    status: "completed" },
+    { id: "li-ac-chimney",   workStreamId: "ws-ac",    name: "Chimney + Chulha",      vendor: "Appliance shop", status: "part_paid" },
+    { id: "li-gate-1",       workStreamId: "ws-gates", name: "Steel gate 1",          vendor: "Gate maker",     status: "pending" },
+    { id: "li-gate-2",       workStreamId: "ws-gates", name: "Steel gate 2 + lock",   vendor: "Gate maker",     status: "pending" },
+    { id: "li-jaquar",       workStreamId: "ws-gates", name: "Jaquar bathroom fittings", vendor: "Jaquar dealer", status: "completed" },
+    { id: "li-mica",         workStreamId: "ws-panels", name: "Mica & Acrylic (kitchen/TV/almira)", vendor: "Laminate shop", status: "completed" },
+    { id: "li-igl",          workStreamId: "ws-utils", name: "IGL gas pipeline",      vendor: "IGL",            status: "completed" },
+  ];
+  for (const li of lineItems) {
+    await prisma.lineItem.upsert({
+      where: { id: li.id },
+      update: {},
+      create: li,
+    });
+  }
+
+  await prisma.cashAdvance.upsert({
+    where: { id: "adv-carp-mil" },
+    update: {},
+    create: {
+      id:         "adv-carp-mil",
+      payerId:    "payer-mil",
+      projectId:  home.id,
+      label:      "Carpenter cash float (via MIL)",
+      totalGiven: 50000,
+      notes:      "MIL gave cash advance to carpenter; to be repaid to MIL",
+    },
+  });
+
+  await prisma.transaction.deleteMany({ where: { projectId: home.id } });
+  await prisma.builderDeduction.deleteMany({ where: { projectId: home.id } });
+
+  const txns = [
+    { description: "Booking amount to builder",      amount: 500000, date: new Date("2025-06-15"), workStreamId: "ws-flat", paidByPayerId: "payer-me",  settlementType: "self", phase: "advance", paymentMode: "neft" },
+    { description: "Agreement & registration fees",  amount: 85000,  date: new Date("2025-08-01"), workStreamId: "ws-fees", paidByPayerId: "payer-me",  settlementType: "self", phase: "full",    paymentMode: "neft" },
+    { description: "Home loan processing fee",       amount: 12000,  date: new Date("2025-09-10"), workStreamId: "ws-loan", paidByPayerId: "payer-me",  settlementType: "self", phase: "full",    paymentMode: "netbanking" },
+    { description: "Builder instalment 1",           amount: 800000, date: new Date("2025-12-20"), workStreamId: "ws-flat", paidByPayerId: "payer-fil", settlementType: "repayable", phase: "part", paymentMode: "neft" },
+    { description: "Sofa cloth payment (Mumbai)", amount: 18000, date: new Date("2026-03-10"), workStreamId: "ws-sofa", lineItemId: "li-sofa-cloth", paidByPayerId: "payer-me",  settlementType: "self", phase: "full",    paymentMode: "upi" },
+    { description: "Sofa cloth delivery (bhada)",  amount: 1200,  date: new Date("2026-03-12"), workStreamId: "ws-sofa", lineItemId: "li-sofa-cloth", paidByPayerId: "payer-me",  settlementType: "self", phase: "full",    paymentMode: "cash" },
+    { description: "Carpenter advance",            amount: 25000, date: new Date("2026-03-05"), workStreamId: "ws-sofa", lineItemId: "li-sofa-carp",  paidByPayerId: "payer-mil", settlementType: "repayable", phase: "advance", paymentMode: "cash", cashAdvanceId: "adv-carp-mil" },
+    { description: "Carpenter part payment",       amount: 15000, date: new Date("2026-04-02"), workStreamId: "ws-sofa", lineItemId: "li-sofa-carp",  paidByPayerId: "payer-me",  settlementType: "self", phase: "part",    paymentMode: "upi" },
+    { description: "Foam advance",                 amount: 8000,  date: new Date("2026-03-20"), workStreamId: "ws-sofa", lineItemId: "li-sofa-foam",  paidByPayerId: "payer-me",  settlementType: "self", phase: "advance", paymentMode: "upi" },
+    { description: "Temple stone work",            amount: 35000, date: new Date("2026-02-15"), workStreamId: "ws-stone", lineItemId: "li-stone-temple", paidByPayerId: "payer-fil", settlementType: "gift", phase: "full", paymentMode: "cash" },
+    { description: "Nano white stone for temple",  amount: 6000,  date: new Date("2026-02-18"), workStreamId: "ws-stone", lineItemId: "li-stone-nano",   paidByPayerId: "payer-me",  settlementType: "self", phase: "full", paymentMode: "cash" },
+    { description: "Kitchen hob cut + gas hole",   amount: 4500,  date: new Date("2026-02-20"), workStreamId: "ws-stone", lineItemId: "li-stone-kitch",  paidByPayerId: "payer-fil", settlementType: "gift", phase: "full", paymentMode: "cash" },
+    { description: "Haier Split AC",               amount: 42000, date: new Date("2026-04-10"), workStreamId: "ws-ac", lineItemId: "li-ac-haier", paidByPayerId: "payer-me",  settlementType: "self", phase: "full", paymentMode: "upi" },
+    { description: "O-General Window AC",          amount: 38000, date: new Date("2026-04-12"), workStreamId: "ws-ac", lineItemId: "li-ac-ogen",  paidByPayerId: "payer-fil", settlementType: "repayable", phase: "full", paymentMode: "credit_card", paidBy_card: "FIL HDFC card" },
+    { description: "Chimney + Chulha advance",     amount: 10000, date: new Date("2026-04-15"), workStreamId: "ws-ac", lineItemId: "li-ac-chimney", paidByPayerId: "payer-me",  settlementType: "self", phase: "advance", paymentMode: "upi" },
+    { description: "Carpenter advance (cash)",     amount: 30000, date: new Date("2026-04-20"), workStreamId: "ws-carp", lineItemId: "li-carp-bed", paidByPayerId: "payer-me",  settlementType: "self", phase: "advance", paymentMode: "cash" },
+    { description: "Carpenter part payment (UPI)", amount: 20000, date: new Date("2026-05-01"), workStreamId: "ws-carp", lineItemId: "li-carp-bed", paidByPayerId: "payer-me",  settlementType: "self", phase: "part", paymentMode: "upi" },
+    { description: "Jaquar bathroom fittings",     amount: 28000, date: new Date("2026-01-20"), workStreamId: "ws-gates", lineItemId: "li-jaquar", paidByPayerId: "payer-me",  settlementType: "self", phase: "full", paymentMode: "upi" },
+    { description: "Mica & Acrylic (cash part)",   amount: 15000, date: new Date("2026-02-01"), workStreamId: "ws-panels", lineItemId: "li-mica", paidByPayerId: "payer-me",  settlementType: "self", phase: "part", paymentMode: "cash" },
+    { description: "Mica & Acrylic (online part)", amount: 22000, date: new Date("2026-02-02"), workStreamId: "ws-panels", lineItemId: "li-mica", paidByPayerId: "payer-me",  settlementType: "self", phase: "part", paymentMode: "upi" },
+    { description: "Mica delivery charge",         amount: 800,   date: new Date("2026-02-03"), workStreamId: "ws-panels", lineItemId: "li-mica", paidByPayerId: "payer-me",  settlementType: "self", phase: "full", paymentMode: "cash" },
+    { description: "IGL gas pipeline connection",  amount: 6500,  date: new Date("2026-03-01"), workStreamId: "ws-utils", lineItemId: "li-igl", paidByPayerId: "payer-me",  settlementType: "self", phase: "full", paymentMode: "netbanking" },
+  ];
+  for (const t of txns) {
+    await prisma.transaction.create({ data: { ...t, projectId: home.id } });
+  }
+  console.log(`✓ Home project: ${streams.length} work streams, ${lineItems.length} line items, ${txns.length} transactions`);
+
+  const deductions = [
+    { item: "Jaquar bathroom fittings", reason: "Builder was to install standard CP fittings", estimatedAmount: 15000, selfPaidAmount: 28000, status: "pending" },
+    { item: "Custom chimney",           reason: "Builder was to provide basic chimney",        estimatedAmount: 12000, selfPaidAmount: 0,     status: "pending" },
+    { item: "Kitchen/TV/Almira mica",   reason: "Builder laminate work declined",              estimatedAmount: 20000, selfPaidAmount: 37800, status: "pending" },
+  ];
+  for (const d of deductions) {
+    await prisma.builderDeduction.create({ data: { ...d, projectId: home.id } });
+  }
+  console.log(`✓ Builder deductions: ${deductions.length} items`);
+
   // ── Net Worth Config (indianStocks override only) ────────────────────────
   const primaryPortfolio = await prisma.portfolio.findUnique({
     where: { id: "portfolio-primary" },
